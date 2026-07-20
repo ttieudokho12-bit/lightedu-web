@@ -1,0 +1,93 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A student or teacher in the system",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "Firebase Auth UID" },
+        "email": { "type": "string", "format": "email", "description": "User email" },
+        "displayName": { "type": "string", "description": "User display name" },
+        "role": { "type": "string", "enum": ["student", "teacher", "admin"], "description": "User role" },
+        "classId": { "type": "string", "description": "ID of the class the student belongs to" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Class": {
+      "title": "Class",
+      "description": "A school class",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "teacherId": { "type": "string" }
+      },
+      "required": ["name", "teacherId"]
+    },
+    "Assignment": {
+      "title": "Assignment",
+      "description": "A quiz assigned to a class",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "classId": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "title": { "type": "string" },
+        "subject": { "type": "string" },
+        "questions": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["classId", "teacherId", "title", "subject", "questions"]
+    },
+    "QuizResult": {
+      "title": "Quiz Result",
+      "description": "Result of a quiz taken by a student",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "UID of the student" },
+        "subject": { "type": "string", "description": "Subject (Toán, Ngữ Văn, Tiếng Anh)" },
+        "topic": { "type": "string", "description": "Topic of the quiz" },
+        "score": { "type": "number", "description": "Number of correct answers" },
+        "totalQuestions": { "type": "number", "description": "Total number of questions" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the quiz was completed" }
+      },
+      "required": ["uid", "subject", "topic", "score", "totalQuestions", "timestamp"]
+    },
+    "QuizTemplate": {
+      "title": "Quiz Template",
+      "description": "A quiz saved in the teacher's library",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "teacherId": { "type": "string" },
+        "title": { "type": "string" },
+        "subject": { "type": "string" },
+        "questions": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["teacherId", "title", "subject", "questions"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/classes/{classId}": {
+      "schema": "Class",
+      "description": "School classes"
+    },
+    "/assignments/{assignmentId}": {
+      "schema": "Assignment",
+      "description": "Quizzes assigned to classes"
+    },
+    "/results/{resultId}": {
+      "schema": "QuizResult",
+      "description": "History of quiz results"
+    },
+    "/quiz_templates/{templateId}": {
+      "schema": "QuizTemplate",
+      "description": "Teacher's quiz library"
+    }
+  }
+}
