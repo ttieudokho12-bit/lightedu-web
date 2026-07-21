@@ -1056,11 +1056,11 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
         <div className="space-y-6">
           {/* Logo Header */}
           <div className="flex items-center gap-3 px-2">
-            <div className="p-2.5 bg-[#2563eb] rounded-2xl shadow-lg shadow-blue-100 flex items-center justify-center text-white">
-              <School className="w-6 h-6" />
+            <div className="p-2.5 bg-[#2563eb] rounded-2xl shadow-lg shadow-blue-100 flex items-center justify-center">
+              <CuteLightbulbMini className="w-6 h-6" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-stone-900 tracking-tight leading-tight">EduSmart</h1>
+              <h1 className="text-xl font-bold text-stone-900 tracking-tight leading-tight">Lightedu</h1>
               <p className="text-[10px] text-stone-400 font-medium">Học tập thông minh</p>
               <p className="text-[10px] text-[#2563eb] font-bold mt-0.5">Zalo: 0359888795</p>
             </div>
@@ -1104,7 +1104,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
         <div className="mt-8 bg-gradient-to-br from-blue-50 to-indigo-50/50 p-4 rounded-3xl border border-blue-100/50 flex flex-col items-center text-center relative overflow-hidden">
           <img 
             src={studentSidebarIllustration} 
-            alt="EduSmart Companion" 
+            alt="Lightedu Companion" 
             className="w-24 h-24 object-contain mb-2"
             referrerPolicy="no-referrer"
           />
@@ -1142,11 +1142,11 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
               <div className="space-y-6">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className="p-2 bg-[#2563eb] rounded-xl text-white">
-                      <School className="w-5 h-5" />
+                    <div className="p-2 bg-[#2563eb] rounded-xl">
+                      <CuteLightbulbMini className="w-5 h-5" />
                     </div>
                     <div>
-                      <h1 className="text-lg font-bold text-stone-900">EduSmart</h1>
+                      <h1 className="text-lg font-bold text-stone-900">Lightedu</h1>
                       <p className="text-[9px] text-stone-400">Học tập thông minh</p>
                       <p className="text-[9px] text-[#2563eb] font-bold mt-0.5">Zalo: 0359888795</p>
                     </div>
@@ -1617,7 +1617,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                       <Trophy className="w-5 h-5 animate-pulse" />
                     </div>
                     <div>
-                      <h4 className="text-base font-bold text-stone-800 font-sans tracking-tight">Đua Top EduSmart</h4>
+                      <h4 className="text-base font-bold text-stone-800 font-sans tracking-tight">Đua Top Lightedu</h4>
                       <p className="text-xs text-stone-400 font-medium">Bảng xếp hạng ôn tập trực tuyến cập nhật liên tục</p>
                     </div>
                   </div>
@@ -2451,7 +2451,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                         <div className="bg-amber-50/50 border border-amber-100/50 p-4 rounded-2xl flex items-start gap-2.5">
                           <Sparkles className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
                           <p className="text-[10px] text-amber-800 leading-relaxed font-semibold">
-                            AI của EduSmart sẽ ngay lập tức biên soạn đề ngẫu nhiên bám sát cấu trúc của Bộ Giáo dục để giúp con tăng tốc tư duy tối đa!
+                            AI của Lightedu sẽ ngay lập tức biên soạn đề ngẫu nhiên bám sát cấu trúc của Bộ Giáo dục để giúp con tăng tốc tư duy tối đa!
                           </p>
                         </div>
 
@@ -2924,7 +2924,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
               {[
                 { title: 'Thầy cô vừa giao đề thi mới', desc: 'Bài ôn tập cuối học kỳ 2 môn Toán lớp 5 đã được mở. Con hãy cố gắng hoàn thành trước ngày 22/07 nhé.', time: '2 giờ trước', type: 'assignment' },
                 { title: 'Trợ lý AI vừa phân tích kết quả mới', desc: 'Có tiến trình học tập vượt bậc trong môn Tiếng Anh! Hãy xem lộ trình để giữ vững phong độ.', time: '1 ngày trước', type: 'ai' },
-                { title: 'Cập nhật hệ thống EduSmart v2.0', desc: 'Trải nghiệm giao diện học tập thế hệ mới, tối ưu hóa biểu đồ điểm và tốc độ chấm thi bằng AI.', time: '3 ngày trước', type: 'system' }
+                { title: 'Cập nhật hệ thống Lightedu v2.0', desc: 'Trải nghiệm giao diện học tập thế hệ mới, tối ưu hóa biểu đồ điểm và tốc độ chấm thi bằng AI.', time: '3 ngày trước', type: 'system' }
               ].map((notif, idx) => (
                 <div key={idx} className="bg-white p-5 rounded-2xl border border-stone-100 shadow-sm flex items-start gap-4 hover:border-blue-100 hover:shadow-md transition-all">
                   <div className={`p-3 rounded-xl shrink-0 ${
@@ -3090,7 +3090,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                 <div className="absolute right-0 top-0 translate-x-12 -translate-y-12 w-64 h-64 rounded-full bg-white/10 blur-3xl pointer-events-none"></div>
                 <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
                   <div className="space-y-2">
-                    <span className="text-[10px] font-bold uppercase tracking-widest bg-white/20 px-3 py-1 rounded-full border border-white/10">Cẩm nang EduSmart</span>
+                    <span className="text-[10px] font-bold uppercase tracking-widest bg-white/20 px-3 py-1 rounded-full border border-white/10">Cẩm nang Lightedu</span>
                     <h2 className="text-2xl sm:text-3xl font-extrabold tracking-tight">Giới Thiệu & Hướng Dẫn Sử Dụng</h2>
                     <p className="text-xs sm:text-sm text-emerald-100 max-w-xl font-medium leading-relaxed">
                       Chào mừng phụ huynh và các em học sinh đến với ứng dụng học tập thông minh. Xem hướng dẫn sử dụng tài khoản học sinh dưới đây để tối ưu hóa việc học tập.
@@ -3100,13 +3100,13 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                     <button
                       id="btn-copy-advertising"
                       onClick={() => {
-                        const adText = `🌟 GIỚI THIỆU ỨNG DỤNG HỌC TẬP THÔNG MINH EDUSMART
+                        const adText = `🌟 GIỚI THIỆU ỨNG DỤNG HỌC TẬP THÔNG MINH LIGHTEDU
 Giải Pháp Học Tập Toàn Diện – Đồng Hành Cùng Con Chinh Phục Tri Thức
 
 Kính gửi Quý phụ huynh và các em học sinh thân mến,
-Trong thời đại công nghệ số, việc tự học và ôn luyện kiến thức trực tiếp trực tuyến đã trở thành chìa khóa vàng giúp các em học sinh bứt phá trong học tập. EduSmart ra đời với sứ mệnh mang đến một môi trường học tập Chủ động – Sáng tạo – Đầy hứng khởi dành riêng cho học sinh Tiểu học và Trung học.
+Trong thời đại công nghệ số, việc tự học và ôn luyện kiến thức trực tiếp trực tuyến đã trở thành chìa khóa vàng giúp các em học sinh bứt phá trong học tập. Lightedu ra đời với sứ mệnh mang đến một môi trường học tập Chủ động – Sáng tạo – Đầy hứng khởi dành riêng cho học sinh Tiểu học và Trung học.
 
-🚀 ƯU ĐIỂM VƯỢT TRỘI CỦA EDUSMART:
+🚀 ƯU ĐIỂM VƯỢT TRỘI CỦA LIGHTEDU:
 1. Tự Tạo Đề Ôn Luyện Bằng AI: Học sinh không còn bị bó buộc trong những bộ đề mẫu cũ kỹ. Với trí tuệ nhân tạo Gemini tích hợp, các em chỉ cần chọn môn học hoặc tự nhập chủ đề mong muốn (Ví dụ: "Phép cộng trong phạm vi 100", "Từ vựng tiếng Anh chủ đề gia đình", "Ki-lô-gam và Lít"), hệ thống sẽ ngay lập tức biên soạn một bộ đề trắc nghiệm chuẩn kiến thức với độ khó tùy chọn (Dễ, Vừa, Khó).
 2. Nhận Đề Kiểm Tra Trực Tiếp Từ Giáo Viên: Học sinh dễ dàng tham gia lớp học bằng Mã Lớp (Class Code) để nhận bài tập, đề kiểm tra chính thức và ôn luyện theo đúng lộ trình trên lớp.
 3. Nhận Diện Tiến Độ Bằng Màu Sắc Trực Quan:
@@ -3144,16 +3144,16 @@ Trong thời đại công nghệ số, việc tự học và ôn luyện kiến 
                         <h3 className="text-sm font-bold text-stone-800">Bài giới thiệu cho Phụ huynh & Học sinh</h3>
                       </div>
                     </div>
-                    <p className="text-[11px] text-stone-400 font-medium">Bản thảo quảng cáo hoàn chỉnh được soạn thảo chuyên nghiệp. Thầy/Cô hoặc Học sinh có thể gửi qua Zalo, Facebook để quảng bá EduSmart.</p>
+                    <p className="text-[11px] text-stone-400 font-medium">Bản thảo quảng cáo hoàn chỉnh được soạn thảo chuyên nghiệp. Thầy/Cô hoặc Học sinh có thể gửi qua Zalo, Facebook để quảng bá Lightedu.</p>
                     
                     <div className="bg-stone-50 border border-stone-100 p-5 rounded-2xl max-h-[480px] overflow-y-auto text-xs text-stone-600 leading-relaxed space-y-4 font-normal custom-scrollbar select-all" id="guide-marketing-content">
-                      <p className="font-extrabold text-stone-800 text-center text-sm">🌟 GIỚI THIỆU ỨNG DỤNG HỌC TẬP THÔNG MINH EDUSMART</p>
+                      <p className="font-extrabold text-stone-800 text-center text-sm">🌟 GIỚI THIỆU ỨNG DỤNG HỌC TẬP THÔNG MINH LIGHTEDU</p>
                       <p className="font-bold text-stone-700 text-center">Giải Pháp Học Tập Toàn Diện – Đồng Hành Cùng Con Chinh Phục Tri Thức</p>
                       
                       <p className="italic">Kính gửi Quý phụ huynh và các em học sinh thân mến,</p>
-                      <p>Trong thời đại công nghệ số, việc tự học và ôn luyện kiến thức trực tiếp trực tuyến đã trở thành chìa khóa vàng giúp các em học sinh bứt phá trong học tập. <strong>EduSmart</strong> ra đời với sứ mệnh mang đến một môi trường học tập <strong>Chủ động – Sáng tạo – Đầy hứng khởi</strong> dành riêng cho học sinh Tiểu học và Trung học.</p>
+                      <p>Trong thời đại công nghệ số, việc tự học và ôn luyện kiến thức trực tiếp trực tuyến đã trở thành chìa khóa vàng giúp các em học sinh bứt phá trong học tập. <strong>Lightedu</strong> ra đời với sứ mệnh mang đến một môi trường học tập <strong>Chủ động – Sáng tạo – Đầy hứng khởi</strong> dành riêng cho học sinh Tiểu học và Trung học.</p>
                       
-                      <p className="font-bold text-stone-800">🚀 ƯU ĐIỂM VƯỢT TRỘI CỦA EDUSMART:</p>
+                      <p className="font-bold text-stone-800">🚀 ƯU ĐIỂM VƯỢT TRỘI CỦA LIGHTEDU:</p>
                       <ul className="list-decimal pl-4 space-y-2">
                         <li><strong>Tự Tạo Đề Ôn Luyện Bằng AI</strong>: Học sinh không còn bị bó buộc trong các bộ đề mẫu cũ kỹ. Với trí tuệ nhân tạo Gemini tích hợp, các em chỉ cần chọn môn học hoặc tự nhập chủ đề mong muốn, hệ thống sẽ ngay lập tức biên soạn đề thi chuẩn.</li>
                         <li><strong>Nhận Đề Kiểm Tra Từ Giáo Viên</strong>: Tham gia lớp học bằng mã lớp để đồng bộ đề từ giáo viên.</li>
@@ -3182,7 +3182,7 @@ Trong thời đại công nghệ số, việc tự học và ôn luyện kiến 
                   <div className="bg-white p-6 sm:p-8 rounded-3xl border border-stone-100 shadow-sm space-y-6" id="guide-steps-box">
                     <div>
                       <h3 className="text-base font-bold text-stone-800">Cách sử dụng tài khoản học sinh (On-boarding)</h3>
-                      <p className="text-[10px] text-stone-400 mt-0.5">Hướng dẫn chi tiết từng bước hoạt động học tập trên hệ thống EduSmart</p>
+                      <p className="text-[10px] text-stone-400 mt-0.5">Hướng dẫn chi tiết từng bước hoạt động học tập trên hệ thống Lightedu</p>
                     </div>
 
                     <div className="space-y-6 relative before:absolute before:left-6 before:top-2 before:bottom-2 before:w-0.5 before:bg-stone-100">
@@ -3214,7 +3214,7 @@ Trong thời đại công nghệ số, việc tự học và ôn luyện kiến 
                             <span className="px-1.5 py-0.5 text-[8px] bg-emerald-50 text-emerald-600 rounded-md font-bold uppercase">Mã lớp</span>
                           </h4>
                           <p className="text-[11px] text-stone-500 leading-relaxed font-normal">
-                            Nếu thầy cô trên lớp có giao bài thi qua EduSmart, em hãy nhận Mã Lớp học từ thầy cô, nhập mã này vào ô tham gia lớp học ở tab <strong className="text-stone-700">Đề kiểm tra của GV</strong>. Tất cả đề bài thầy cô giao sẽ lập tức xuất hiện đồng bộ trong tài khoản của em.
+                            Nếu thầy cô trên lớp có giao bài thi qua Lightedu, em hãy nhận Mã Lớp học từ thầy cô, nhập mã này vào ô tham gia lớp học ở tab <strong className="text-stone-700">Đề kiểm tra của GV</strong>. Tất cả đề bài thầy cô giao sẽ lập tức xuất hiện đồng bộ trong tài khoản của em.
                           </p>
                         </div>
                       </div>

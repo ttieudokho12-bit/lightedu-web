@@ -1915,7 +1915,7 @@ Lưu ý: Giọng văn ấm áp, súc tích, dễ thương (dùng icon sinh độ
         historyContext = `Bé chưa làm bài ôn tập nào thuộc chủ đề này.`;
       }
 
-      const prompt = `Bạn là một giáo viên tiểu học thân thiện, vui tính và là Trợ lý Cố vấn Học tập AI thông minh của EduSmart. 
+      const prompt = `Bạn là một giáo viên tiểu học thân thiện, vui tính và là Trợ lý Cố vấn Học tập AI thông minh của Lightedu. 
 Hãy đưa ra một vài lời khuyên, mẹo nhỏ hoặc hướng dẫn ngắn gọn cho bé "${studentName}" để học tốt chủ đề "${topic}" của môn "${subject}".
 
 Thông tin tiến trình học tập của bé:
@@ -2024,7 +2024,7 @@ Hãy trả về bằng tiếng Việt, có sử dụng biểu tượng cảm xú
         return res.json(generateLocalSpeechEvaluation(word, "", sentence));
       }
 
-      const prompt = `Bạn là một chuyên gia ngữ âm học tiếng Anh trẻ em vui tính, tận tâm và là Trợ lý AI chấm điểm phát âm thông minh của EduSmart.
+      const prompt = `Bạn là một chuyên gia ngữ âm học tiếng Anh trẻ em vui tính, tận tâm và là Trợ lý AI chấm điểm phát âm thông minh của Lightedu.
 Nhiệm vụ của bạn là đánh giá giọng đọc tiếng Anh của học sinh tiểu học Việt Nam.
 
 Thông tin bài tập phát âm:
