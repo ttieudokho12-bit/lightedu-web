@@ -742,20 +742,20 @@ export default function Login() {
             </h1>
           </div>
 
-          {/* Ribbon "Cấp Tiểu Học" */}
+          {/* Ribbon "Nơi tri thức tỏa sáng" */}
           <div className="relative inline-flex items-center justify-center mt-3 filter drop-shadow-[0_3px_4px_rgba(234,92,132,0.25)] hover:scale-105 transition-transform duration-200 cursor-pointer">
-            <svg className="w-56 h-10" viewBox="0 0 200 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <svg className="w-64 sm:w-72 h-10" viewBox="0 0 240 40" fill="none" xmlns="http://www.w3.org/2000/svg">
               {/* Ribbon Left fold */}
               <path d="M 15 32 L 23 14 L 32 32 L 20 32 Z" fill="#C53F62" />
               <path d="M 15 32 L 27 32 L 23 14 Z" fill="#912641" />
               {/* Ribbon Right fold */}
-              <path d="M 185 32 L 177 14 L 168 32 L 180 32 Z" fill="#C53F62" />
-              <path d="M 185 32 L 173 32 L 177 14 Z" fill="#912641" />
+              <path d="M 225 32 L 217 14 L 208 32 L 220 32 Z" fill="#C53F62" />
+              <path d="M 225 32 L 213 32 L 217 14 Z" fill="#912641" />
               {/* Main ribbon body */}
-              <path d="M 24 10 L 176 10 C 176 10, 181 21, 176 33 L 24 33 C 19 21, 24 10, 24 10 Z" fill="#EA5C84" stroke="#D0426B" strokeWidth="1.5" />
+              <path d="M 24 10 L 216 10 C 216 10, 221 21, 216 33 L 24 33 C 19 21, 24 10, 24 10 Z" fill="#EA5C84" stroke="#D0426B" strokeWidth="1.5" />
             </svg>
-            <span className="absolute text-white font-bold text-sm uppercase tracking-widest select-none pointer-events-none">
-              Cấp Tiểu Học
+            <span className="absolute text-white font-bold text-xs sm:text-sm uppercase tracking-wider select-none pointer-events-none">
+              Nơi tri thức tỏa sáng
             </span>
           </div>
 
@@ -765,7 +765,6 @@ export default function Login() {
               <div className="w-5 h-5 rounded-full bg-[#0084FF] flex items-center justify-center text-[8px] font-black text-white italic tracking-tighter shadow-sm select-none">
                 Zalo
               </div>
-              <span className="text-stone-500 font-bold">Zalo:</span>
               <span className="text-[#28A745] font-black tracking-wide">0359888795</span>
             </div>
           </div>

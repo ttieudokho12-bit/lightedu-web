@@ -41,7 +41,7 @@ export default function Navbar({ user, onHome }: NavbarProps) {
               <GraduationCap className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-lg font-bold text-stone-900 leading-tight">Lightedu - Cấp Tiểu Học</h1>
+              <h1 className="text-lg font-bold text-stone-900 leading-tight">Lightedu - Nơi tri thức tỏa sáng</h1>
               <p className="text-[10px] text-stone-500 font-bold">Zalo: 0359888795</p>
             </div>
           </button>
@@ -51,7 +51,7 @@ export default function Navbar({ user, onHome }: NavbarProps) {
               <GraduationCap className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-lg font-bold text-stone-900 leading-tight">Lightedu - Cấp Tiểu Học</h1>
+              <h1 className="text-lg font-bold text-stone-900 leading-tight">Lightedu - Nơi tri thức tỏa sáng</h1>
               <p className="text-[10px] text-stone-500 font-bold">Zalo: 0359888795</p>
             </div>
           </div>

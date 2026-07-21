@@ -17,6 +17,8 @@ export function formatMathSymbols(text: string): string {
       part = part.replace(/\\+div\b/g, ' : ');
       part = part.replace(/\\+ge\b|\\+geq\b/g, ' ≥ ');
       part = part.replace(/\\+le\b|\\+leq\b/g, ' ≤ ');
+      part = part.replace(/\\+gt\b/g, ' $>$ ');
+      part = part.replace(/\\+lt\b/g, ' $<$ ');
       part = part.replace(/\\+dots\b|\\+ldots\b/g, '...');
       
       // Convert raw fraction slash (e.g. 3/5) outside math blocks into proper vertical LaTeX fractions

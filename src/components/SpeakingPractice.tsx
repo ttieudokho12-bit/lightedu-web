@@ -134,19 +134,9 @@ export const SpeakingPractice: React.FC<SpeakingPracticeProps> = ({
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         
         if (data.format === 'mp3') {
-          const audioCtx = new AudioContextClass();
-          sampleAudioCtxRef.current = audioCtx;
-          if (audioCtx.state === 'suspended') {
-            await audioCtx.resume();
-          }
-
-          const buffer = await audioCtx.decodeAudioData(arrayBuffer);
-          const source = audioCtx.createBufferSource();
-          source.buffer = buffer;
-          sampleAudioSourceRef.current = source;
-
-          source.connect(audioCtx.destination);
-          source.start(0);
+          const audio = new Audio(`data:audio/mp3;base64,${data.audio}`);
+          await audio.play();
+          return; // Success!
         } else {
           const dataView = new DataView(arrayBuffer);
           const numSamples = arrayBuffer.byteLength / 2;
@@ -170,35 +160,51 @@ export const SpeakingPractice: React.FC<SpeakingPracticeProps> = ({
 
           source.connect(audioCtx.destination);
           source.start(0);
+          return; // Success!
         }
-        return; // Success!
       } catch (apiError) {
         console.warn("Server-side TTS failed or timed out, falling back to client-side speechSynthesis:", apiError);
       }
 
       // Fallback: Client-side Speech Synthesis
-      if (window.speechSynthesis) {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         const isSingleWord = !text.trim().includes(' ');
+        const isVi = /[àáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/i.test(text);
 
         const speakWithSettings = (wordText: string, onEndCallback?: () => void) => {
-          const utterance = new SpeechSynthesisUtterance(wordText);
-          utterance.lang = 'en-US';
-          utterance.rate = rate; // use requested rate (e.g. 0.8 or 1.0)
-          utterance.pitch = 1.5; // friendly pitch
+          try {
+            window.speechSynthesis.cancel();
+            window.speechSynthesis.resume();
+          } catch (e) {}
 
-          const voices = window.speechSynthesis.getVoices();
-          const femaleUSVoice = voices.find(voice => {
-            const name = voice.name.toLowerCase();
+          const utterance = new SpeechSynthesisUtterance(wordText);
+          utterance.lang = isVi ? 'vi-VN' : 'en-US';
+          utterance.rate = rate; // use requested rate (e.g. 0.8 or 1.0)
+          utterance.pitch = isVi ? 1.0 : 1.3;
+
+          let voices = window.speechSynthesis.getVoices();
+          if (!voices || voices.length === 0) {
+            voices = window.speechSynthesis.getVoices();
+          }
+
+          const targetLang = isVi ? 'vi' : 'en';
+          const matchingVoices = voices.filter(voice => {
             const lang = voice.lang.toLowerCase();
-            return (lang.includes('en-us') || lang.includes('en_us')) && 
-                   (name.includes('female') || name.includes('zira') || name.includes('samantha') || name.includes('hazel') || name.includes('jenny') || name.includes('ava') || name.includes('shimmer') || name.includes('google'));
-          }) || voices.find(voice => {
-            const lang = voice.lang.toLowerCase();
-            return lang.includes('en-us') || lang.includes('en_us');
+            return lang.startsWith(targetLang) || lang.includes(targetLang);
           });
 
-          if (femaleUSVoice) {
-            utterance.voice = femaleUSVoice;
+          if (matchingVoices.length > 0) {
+            const femaleVoice = matchingVoices.find(v => {
+              const nameLower = v.name.toLowerCase();
+              return nameLower.includes('female') ||
+                     nameLower.includes('linh') ||
+                     nameLower.includes('hoaimy') ||
+                     nameLower.includes('an') ||
+                     nameLower.includes('google') ||
+                     nameLower.includes('samantha') ||
+                     nameLower.includes('zira');
+            });
+            utterance.voice = femaleVoice || matchingVoices[0];
           }
 
           utterance.onend = () => {
@@ -207,7 +213,14 @@ export const SpeakingPractice: React.FC<SpeakingPracticeProps> = ({
             }
           };
 
-          window.speechSynthesis.speak(utterance);
+          setTimeout(() => {
+            try {
+              window.speechSynthesis.resume();
+              window.speechSynthesis.speak(utterance);
+            } catch (err) {
+              console.error("SpeechSynthesis error:", err);
+            }
+          }, 50);
         };
 
         // For 0.8 rate, repeat single words with 500ms break

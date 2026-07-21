@@ -412,24 +412,17 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject }
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         
         if (data.format === 'mp3') {
-          const audioCtx = new AudioContextClass();
-          audioCtxRef.current = audioCtx;
-          if (audioCtx.state === 'suspended') {
-            await audioCtx.resume();
-          }
-          
-          const buffer = await audioCtx.decodeAudioData(arrayBuffer);
-          const source = audioCtx.createBufferSource();
-          source.buffer = buffer;
-          audioSourceRef.current = source;
-
-          source.connect(audioCtx.destination);
-          source.onended = () => {
+          const audio = new Audio(`data:audio/mp3;base64,${data.audio}`);
+          audio.onended = () => {
             setIsPlayingAudio(false);
             setActiveVocabWord(null);
           };
-
-          source.start(0);
+          audio.onerror = () => {
+            setIsPlayingAudio(false);
+            setActiveVocabWord(null);
+          };
+          await audio.play();
+          return; // Success!
         } else {
           // Convert 16-bit little-endian PCM to Float32
           const dataView = new DataView(arrayBuffer);
@@ -459,44 +452,51 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject }
           };
 
           source.start(0);
+          return; // Success!
         }
-        return; // Success!
       } catch (apiError) {
         console.warn("Server-side TTS failed or timed out, falling back to client-side speechSynthesis:", apiError);
       }
 
       // Fallback: Client-side Speech Synthesis
-      if (typeof window !== 'undefined' && window.speechSynthesis) {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
         const isSingleWord = !text.trim().includes(' ');
+        const isVi = /[àáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/i.test(text);
         
         const speakWithSettings = (wordText: string, onEndCallback?: () => void) => {
-          const utterance = new SpeechSynthesisUtterance(wordText);
-          utterance.lang = 'en-US';
-          utterance.rate = 0.8; // 80% speed rate
-          utterance.pitch = 1.5; // High pitch, cheerful/child-friendly
+          try {
+            window.speechSynthesis.cancel();
+            window.speechSynthesis.resume();
+          } catch (e) {}
 
-          const voices = window.speechSynthesis.getVoices();
-          const enVoices = voices.filter(voice => {
+          const utterance = new SpeechSynthesisUtterance(wordText);
+          utterance.lang = isVi ? 'vi-VN' : 'en-US';
+          utterance.rate = 0.85;
+          utterance.pitch = isVi ? 1.0 : 1.3;
+
+          let voices = window.speechSynthesis.getVoices();
+          if (!voices || voices.length === 0) {
+            voices = window.speechSynthesis.getVoices();
+          }
+
+          const targetLang = isVi ? 'vi' : 'en';
+          const matchingVoices = voices.filter(voice => {
             const lang = voice.lang.toLowerCase();
-            return lang.startsWith('en-') || lang === 'en' || lang.includes('en');
+            return lang.startsWith(targetLang) || lang.includes(targetLang);
           });
 
-          if (enVoices.length > 0) {
-            const nonMaleVoices = enVoices.filter(voice => {
-              const nameLower = voice.name.toLowerCase();
-              return !nameLower.includes('male') &&
-                     !nameLower.includes('david') &&
-                     !nameLower.includes('george') &&
-                     !nameLower.includes('daniel');
+          if (matchingVoices.length > 0) {
+            const femaleVoice = matchingVoices.find(v => {
+              const nameLower = v.name.toLowerCase();
+              return nameLower.includes('female') ||
+                     nameLower.includes('linh') ||
+                     nameLower.includes('hoaimy') ||
+                     nameLower.includes('an') ||
+                     nameLower.includes('google') ||
+                     nameLower.includes('samantha') ||
+                     nameLower.includes('zira');
             });
-            const candidates = nonMaleVoices.length > 0 ? nonMaleVoices : enVoices;
-            
-            // Search for explicit kids/female voices
-            let selectedVoice = candidates.find(v => {
-              const n = v.name.toLowerCase();
-              return n.includes('child') || n.includes('kid') || n.includes('junior') || n.includes('girl') || n.includes('samantha');
-            });
-            utterance.voice = selectedVoice || candidates[0];
+            utterance.voice = femaleVoice || matchingVoices[0];
           }
 
           utterance.onstart = () => {
@@ -515,7 +515,16 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject }
             setActiveVocabWord(null);
           };
 
-          window.speechSynthesis.speak(utterance);
+          setTimeout(() => {
+            try {
+              window.speechSynthesis.resume();
+              window.speechSynthesis.speak(utterance);
+            } catch (err) {
+              console.error("SpeechSynthesis error:", err);
+              setIsPlayingAudio(false);
+              setActiveVocabWord(null);
+            }
+          }, 50);
         };
 
         if (isSingleWord) {
@@ -1102,7 +1111,7 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject }
                       {/* Option value content */}
                       <div className="flex-1">
                         <Markdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
-                          {cleanOptionText(value)}
+                          {formatMathSymbols(value)}
                         </Markdown>
                       </div>
 
@@ -1249,13 +1258,15 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject }
                       <div className="bg-white border border-sky-100 rounded-2xl p-4 sm:p-5 flex items-center justify-center text-center shadow-sm">
                         <div className="text-xl sm:text-2xl font-black text-[#1e3a8a] tracking-wide flex items-center gap-1.5 flex-wrap justify-center">
                           <span>Vậy đáp án là: </span>
-                          <span className="text-rose-500 text-2xl sm:text-3xl font-black px-1.5">
-                            {cleanOptionText(
-                              currentQuestion.correctAnswer === 'A' ? currentQuestion.options.A :
-                              currentQuestion.correctAnswer === 'B' ? currentQuestion.options.B :
-                              currentQuestion.correctAnswer === 'C' ? currentQuestion.options.C :
-                              currentQuestion.options.D
-                            )}
+                          <span className="text-rose-500 text-2xl sm:text-3xl font-black px-1.5 inline-flex items-center">
+                            <Markdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+                              {formatMathSymbols(
+                                currentQuestion.correctAnswer === 'A' ? currentQuestion.options.A :
+                                currentQuestion.correctAnswer === 'B' ? currentQuestion.options.B :
+                                currentQuestion.correctAnswer === 'C' ? currentQuestion.options.C :
+                                currentQuestion.options.D
+                              )}
+                            </Markdown>
                           </span>
                           <span className="text-amber-500">✨</span>
                         </div>

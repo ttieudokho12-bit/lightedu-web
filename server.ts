@@ -1406,126 +1406,30 @@ Ngôn ngữ: Tiếng Việt.`;
 
       console.log(`[TTS API] Received request for: "${text}"`);
 
-      // 1. Convert text to SSML based on the user's explicit guidelines
-      const prompt = `Bạn là trợ lý hỗ trợ xây dựng nội dung giáo dục ngôn ngữ cho ứng dụng học tập. Nhiệm vụ của bạn là chuyển đổi văn bản tôi cung cấp thành mã SSML chuẩn xác để sử dụng cho hệ thống Text-to-Speech (TTS).
+      // Detect language: Vietnamese or English (or explicit query param)
+      const isVietnamese = /[àáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/i.test(text);
+      const reqLang = (req.query.lang as string) || (isVietnamese ? 'vi' : 'en');
 
-Quy tắc cấu hình giọng đọc bắt buộc:
-1. Định dạng: Luôn bao bọc nội dung trong thẻ <speak>...</speak>.
-2. Tốc độ: Sử dụng thẻ <prosody rate="80%"> cho tất cả các câu để duy trì tốc độ chậm rãi, dễ nghe (0.8x).
-3. Cao độ: Sử dụng thẻ <prosody pitch="+2st"> để giọng đọc có âm sắc cao, vui tươi và thân thiện với người học.
-4. Nhịp điệu: Chèn thẻ <break time="500ms"/> giữa các câu hoặc các phân đoạn logic để tạo khoảng nghỉ tự nhiên.
-
-Quy tắc xử lý văn bản:
-- Nếu văn bản là từ đơn: Đọc từ đó, nghỉ 500ms, rồi đọc lại lần thứ hai để người học dễ bắt chước.
-- Nếu văn bản là câu/hội thoại: Đọc toàn bộ câu với ngữ điệu tự nhiên, nhấn mạnh vào các từ khóa chính.
-- KHÔNG thêm bất kỳ lời giải thích, dẫn dắt hay lời chào nào vào phản hồi. Chỉ trả về duy nhất đoạn mã SSML.
-
-Ví dụ cấu trúc đầu ra:
-- Đầu vào: "Book"
-- Đầu ra: <speak><prosody rate="80%" pitch="+2st">Book. <break time="500ms"/> Book.</prosody></speak>
-
-Hãy chuyển đổi văn bản sau đây sang mã SSML chính xác nhất:
-"${text}"`;
-
-      const ssmlResponse = await generateContentWithRetry({
-        model: "gemini-3.1-flash-lite",
-        contents: [
-          {
-            role: "user",
-            parts: [{ text: prompt }]
-          }
-        ],
-        config: {
-          temperature: 0.1
+      const translateUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=${reqLang}&client=tw-ob&q=${encodeURIComponent(text)}`;
+      const fetchResponse = await fetch(translateUrl, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
       });
 
-      let ssml = ssmlResponse.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
-      // Clean up markdown code blocks if the model returned them
-      if (ssml.startsWith("```xml")) {
-        ssml = ssml.substring(6);
-      } else if (ssml.startsWith("```html")) {
-        ssml = ssml.substring(7);
-      } else if (ssml.startsWith("```ssml")) {
-        ssml = ssml.substring(7);
-      } else if (ssml.startsWith("```")) {
-        ssml = ssml.substring(3);
-      }
-      if (ssml.endsWith("```")) {
-        ssml = ssml.substring(0, ssml.length - 3);
-      }
-      ssml = ssml.trim();
-
-      // If we failed to get a valid SSML, create a basic fallback SSML
-      if (!ssml.includes("<speak>")) {
-        const isSingleWord = !text.trim().includes(" ");
-        if (isSingleWord) {
-          ssml = `<speak><prosody rate="80%" pitch="+2st">${text}. <break time="500ms"/> ${text}.</prosody></speak>`;
-        } else {
-          ssml = `<speak><prosody rate="80%" pitch="+2st">${text}</prosody></speak>`;
-        }
+      if (!fetchResponse.ok) {
+        throw new Error(`Google Translate TTS failed with status ${fetchResponse.status}`);
       }
 
-      console.log(`[TTS API] Generated SSML: "${ssml}"`);
+      const arrayBuffer = await fetchResponse.arrayBuffer();
+      const base64Audio = Buffer.from(arrayBuffer).toString('base64');
 
-      // 2. Call gemini-3.1-flash-tts-preview to convert the SSML to Speech
-      let base64Audio = "";
-      let format = "pcm";
-
-      try {
-        const ttsResponse = await generateContentWithRetry({
-          model: "gemini-3.1-flash-tts-preview",
-          contents: [
-            {
-              role: "user",
-              parts: [
-                {
-                  text: `You are an educational text-to-speech engine. Please synthesize the following SSML content exactly as specified. Read the words clearly, cheerful, slow-paced (0.8x rate) and high-pitched (friendly, child-like tone) as described by the prosody tags, and insert 500ms pauses where break tags exist:
-${ssml}`
-                }
-              ]
-            }
-          ],
-          config: {
-            responseModalities: ["AUDIO"],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: { voiceName: "Kore" }
-              }
-            }
-          }
-        });
-
-        base64Audio = ttsResponse.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || "";
-        if (!base64Audio) {
-          throw new Error("No audio returned from Gemini TTS");
-        }
-        format = "pcm";
-      } catch (geminiError: any) {
-        console.warn("[TTS API] Gemini TTS failed, falling back to Google Translate TTS:", geminiError.message || geminiError);
-        
-        // Google Translate TTS Fallback
-        const translateUrl = `https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q=${encodeURIComponent(text)}`;
-        const fetchResponse = await fetch(translateUrl, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-          }
-        });
-        
-        if (!fetchResponse.ok) {
-          throw new Error(`Google Translate TTS failed with status ${fetchResponse.status}`);
-        }
-        
-        const arrayBuffer = await fetchResponse.arrayBuffer();
-        base64Audio = Buffer.from(arrayBuffer).toString('base64');
-        format = "mp3";
-        console.log(`[TTS API] Successfully fell back to Google Translate TTS (MP3 format, ${base64Audio.length} bytes)`);
-      }
+      console.log(`[TTS API] Successfully generated MP3 audio (${base64Audio.length} bytes, lang: ${reqLang})`);
 
       res.json({
-        ssml,
+        ssml: `<speak>${text}</speak>`,
         audio: base64Audio,
-        format
+        format: 'mp3'
       });
     } catch (error: any) {
       console.error("[TTS API] Error in TTS generation:", error);

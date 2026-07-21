@@ -611,8 +611,10 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
       return;
     }
 
-    // Cancel any ongoing speech first to start fresh
-    window.speechSynthesis.cancel();
+    try {
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.resume();
+    } catch (err) {}
 
     // Clean markdown tags for natural speech reading
     const cleanText = text
@@ -659,17 +661,16 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
       const currentSentence = sentences[activeIndex];
       const utterance = new SpeechSynthesisUtterance(currentSentence);
       utterance.lang = 'vi-VN';
+      utterance.rate = 1.0;
 
       // Find Vietnamese female voice if available
-      const voices = window.speechSynthesis.getVoices();
+      let voices = window.speechSynthesis.getVoices();
+      if (!voices || voices.length === 0) {
+        voices = window.speechSynthesis.getVoices();
+      }
       const viVoices = voices.filter(voice => voice.lang.toLowerCase().includes('vi'));
       
       if (viVoices.length > 0) {
-        // Prioritize female Vietnamese voices:
-        // - "Linh" (macOS/iOS)
-        // - "HoaiMy" or "An" (Windows Microsoft HoaiMy)
-        // - "Google" (Google's vi-VN is typically female)
-        // - Names containing "female"
         const femaleVoice = viVoices.find(voice => {
           const nameLower = voice.name.toLowerCase();
           return nameLower.includes('female') ||
@@ -679,7 +680,6 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                  nameLower.includes('google');
         });
         
-        // Apply the female voice, or fall back to the first Vietnamese voice found
         utterance.voice = femaleVoice || viVoices[0];
       }
 
@@ -689,18 +689,25 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
       };
 
       utterance.onerror = (e) => {
-        // Benign events: 'interrupted' or 'canceled' are fired when cancel() is called, which is normal user-triggered stopping.
         if (e.error !== 'interrupted' && e.error !== 'canceled') {
           console.warn("SpeechSynthesisUtterance non-fatal warning/error:", e.error);
         }
         setIsPlayingSpeech(false);
       };
 
-      window.speechSynthesis.speak(utterance);
+      try {
+        window.speechSynthesis.resume();
+        window.speechSynthesis.speak(utterance);
+      } catch (err) {
+        console.error("SpeechSynthesis error:", err);
+        setIsPlayingSpeech(false);
+      }
     };
 
-    // Start playing the first chunk
-    playNext();
+    // Start playing the first chunk with a short delay after cancel
+    setTimeout(() => {
+      playNext();
+    }, 50);
   };
 
   // States for self-learning / test (de-kiem-tra)
