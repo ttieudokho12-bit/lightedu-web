@@ -1,5 +1,5 @@
 {
-  "name": "Remix: Ôn tập kiến thức đã học",
+  "name": "LightEdu - Nền tảng Ôn luyện & Thiết kế Đề thi AI",
   "description": "Nền tảng hỗ trợ học sinh lớp 9 ôn luyện hiệu quả các môn Toán, Ngữ Văn và Tiếng Anh để chuẩn bị cho kỳ thi vào lớp 10.",
   "requestFramePermissions": [
     "microphone",
