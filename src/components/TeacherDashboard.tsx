@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, Users, Send, BookOpen, Trash2, CheckCircle, Loader2, Sparkles, FileText, BarChart3, ChevronRight, User, Clock, Award, BrainCircuit, X, Library, Upload, FileUp, Download, CheckSquare, Square, Eye, Copy, HelpCircle, Home } from 'lucide-react';
+import { Plus, Users, Send, BookOpen, Trash2, CheckCircle, CheckCircle2, Loader2, Sparkles, FileText, BarChart3, ChevronRight, User, Clock, Award, BrainCircuit, X, Library, Upload, FileUp, Download, CheckSquare, Square, Eye, Copy, HelpCircle, Home, Volume2, Mic, Play, Languages, Camera, Folder, Target, Pencil } from 'lucide-react';
 import { db, auth, serverTimestamp, handleFirestoreError, OperationType } from '../firebase';
 import { collection, addDoc, query, where, onSnapshot, deleteDoc, doc, getDocs, orderBy, writeBatch } from 'firebase/firestore';
-import { ClassRoom, Subject, SUBJECTS, Question, Assignment, QuizResult, UserProfile, QuizTemplate } from '../types';
+import { ClassRoom, Subject, SUBJECTS, Question, Assignment, QuizResult, UserProfile, QuizTemplate, PREDEFINED_TOPICS } from '../types';
 import { generateQuestions, generateQuestionsFromContent, analyzeStudentPerformance, generateQuestionsFromFiles } from '../services/gemini';
 import { LazyQuestionImage } from './LazyQuestionImage';
 import Markdown from 'react-markdown';
@@ -11,10 +11,44 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { formatMathSymbols } from '../services/mathUtils';
 import * as XLSX from 'xlsx';
+import { VocabularyIllustration } from './VocabularyIllustration';
+import { SpeakingPractice } from './SpeakingPractice';
+import Quiz from './Quiz';
 
 type TeacherTab = 'CLASSES' | 'CREATE_QUIZ' | 'LIBRARY' | 'STUDENTS' | 'RESULTS';
 
-export default function TeacherDashboard() {
+interface TeacherDashboardProps {
+  userProfile?: UserProfile | null;
+}
+
+export default function TeacherDashboard({ userProfile }: TeacherDashboardProps) {
+  const currentTeacherUid = userProfile?.uid || auth.currentUser?.uid || (() => {
+    try {
+      const local = localStorage.getItem('localUserSession');
+      if (local) return JSON.parse(local).uid;
+    } catch (e) {}
+    return null;
+  })();
+
+  const [teacherProfile, setTeacherProfile] = useState<UserProfile | null>(userProfile || null);
+
+  useEffect(() => {
+    if (userProfile) {
+      setTeacherProfile(userProfile);
+    }
+    if (!currentTeacherUid) return;
+    const unsub = onSnapshot(doc(db, 'users', currentTeacherUid), (docSnap) => {
+      if (docSnap.exists()) {
+        setTeacherProfile(docSnap.data() as UserProfile);
+      }
+    });
+    return () => unsub();
+  }, [currentTeacherUid, userProfile]);
+
+  const teacherAllowedSubjects: Subject[] = (teacherProfile?.allowedSubjects && teacherProfile.allowedSubjects.length > 0)
+    ? teacherProfile.allowedSubjects
+    : SUBJECTS;
+
   const [activeTab, setActiveTab] = useState<TeacherTab>('CLASSES');
   const [classes, setClasses] = useState<ClassRoom[]>([]);
   const [allStudents, setAllStudents] = useState<UserProfile[]>([]);
@@ -34,12 +68,30 @@ export default function TeacherDashboard() {
   const [topic, setTopic] = useState('');
   const [manualContent, setManualContent] = useState('');
   const [customInstructions, setCustomInstructions] = useState('');
-  const [creationMode, setCreationMode] = useState<'topic' | 'content' | 'file'>('topic');
+  const [creationMode, setCreationMode] = useState<'topic' | 'content' | 'file'>('file');
+
+  useEffect(() => {
+    if (teacherAllowedSubjects.length > 0 && !teacherAllowedSubjects.includes(selectedSubject)) {
+      setSelectedSubject(teacherAllowedSubjects[0]);
+    }
+  }, [teacherAllowedSubjects]);
   const [questionCount, setQuestionCount] = useState(10);
+  const [selectedDifficulty, setSelectedDifficulty] = useState<string>('All');
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedQuestions, setGeneratedQuestions] = useState<Question[]>([]);
   const [assignmentTitle, setAssignmentTitle] = useState('');
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
+
+  // Camera State
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const videoRef = React.useRef<HTMLVideoElement | null>(null);
+  const streamRef = React.useRef<MediaStream | null>(null);
+
+  // Preview & Interactive Quiz Trial State
+  const [previewTab, setPreviewTab] = useState<'QUESTIONS' | 'VOCABULARY' | 'PRONUNCIATION'>('QUESTIONS');
+  const [viewingQuizSubject, setViewingQuizSubject] = useState<string>('');
+  const [interactiveQuizPreview, setInteractiveQuizPreview] = useState<{ questions: Question[]; subject: string; title: string } | null>(null);
 
   // Library State
   const [quizTemplates, setQuizTemplates] = useState<QuizTemplate[]>([]);
@@ -56,10 +108,108 @@ export default function TeacherDashboard() {
   // View & Re-assign State
   const [viewingQuiz, setViewingQuiz] = useState<Question[] | null>(null);
   const [viewingQuizTitle, setViewingQuizTitle] = useState('');
+  const [viewingQuizId, setViewingQuizId] = useState<string | null>(null);
+  const [viewingQuizType, setViewingQuizType] = useState<'assignment' | 'template' | null>(null);
   const [reassigningAssignment, setReassigningAssignment] = useState<Assignment | null>(null);
   const [reassignToClasses, setReassignToClasses] = useState<string[]>([]);
   const [isReassigning, setIsReassigning] = useState(false);
+  const [confirmDeleteModal, setConfirmDeleteModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
+
+  const handleSpeakWord = (word: string) => {
+    if ('speechSynthesis' in window) {
+      try {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(word);
+        utterance.lang = 'en-US';
+        utterance.rate = 0.85;
+        window.speechSynthesis.speak(utterance);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+  };
+
+  const getEnglishVocabList = (questions: Question[]) => {
+    if (!questions || questions.length === 0) return [];
+    let list = questions[0]?.vocabularyList || [];
+    if (list.length === 0) {
+      const extracted: { word: string; meaning: string }[] = [];
+      const seenWords = new Set<string>();
+      
+      questions.forEach(q => {
+        const qText = q.question || "";
+        const quoteRegex = /['"“‘]([^'"“”’]{2,})['"”’]/;
+        const match = qText.match(quoteRegex);
+        if (match) {
+          const word = match[1].trim();
+          if (/^[a-zA-Z\s\-!?,.]+$/.test(word) && !seenWords.has(word.toLowerCase()) && word.length < 25) {
+            seenWords.add(word.toLowerCase());
+            const correctOptionText = q.options ? q.options[q.correctAnswer] : "";
+            const hasVietnamese = /[àáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]/i.test(correctOptionText);
+            let meaning = "Từ mới trong bài học";
+            if (hasVietnamese && correctOptionText.length < 50) {
+              meaning = correctOptionText;
+            } else if (q.explanation) {
+              meaning = q.explanation.replace(/^[’'"]|[’'"]$/g, '');
+            }
+            extracted.push({ word, meaning });
+          }
+        }
+      });
+      list = extracted;
+    }
+
+    if (list.length === 0) {
+      list = [
+        { word: "Vocabulary", meaning: "Từ vựng" },
+        { word: "Practice", meaning: "Luyện tập" },
+        { word: "English", meaning: "Tiếng Anh" },
+        { word: "Student", meaning: "Học sinh" },
+        { word: "Teacher", meaning: "Giáo viên" },
+        { word: "School", meaning: "Trường học" }
+      ];
+    }
+    return list;
+  };
+
+  const getTopicsForSubject = (subj: Subject, diff: string) => {
+    const isEng = subj.toLowerCase().includes('anh') || subj.toLowerCase().includes('english');
+    if (isEng) {
+      switch (diff) {
+        case 'Easy':
+          return ['Nhận biết từ vựng', 'Điền chữ cái còn thiếu', 'Dịch từ Việt - Anh', 'Chọn đáp án đúng', 'Bài nghe (Listening)', 'Từ vựng & Phát âm cơ bản'];
+        case 'Medium':
+          return ['Hoàn thành câu tiếng Anh', 'Sắp xếp từ thành câu', 'Từ vựng theo chủ đề', 'Bài tập Đúng/Sai', 'Luyện nghe & Điền từ', 'Từ vựng & Luyện phát âm'];
+        case 'Hard':
+          return ['Sắp xếp câu hoàn chỉnh', 'Chọn câu đúng ngữ pháp', 'Sửa lỗi chính tả & Từ vựng', 'Phân loại từ vựng', 'Đọc hiểu đoạn văn ngắn', 'Luyện nghe & Ngữ âm nâng cao'];
+        default:
+          return [
+            'Tổng hợp kiến thức & Từ vựng',
+            'Nhận biết từ vựng', 'Điền chữ cái', 'Dịch từ vựng',
+            'Hoàn thành câu', 'Sắp xếp từ', 'Từ vựng theo chủ đề',
+            'Sắp xếp câu', 'Đọc hiểu & Ngữ pháp', 'Bài nghe (Listening)',
+            'Từ vựng & Luyện phát âm'
+          ];
+      }
+    }
+    return PREDEFINED_TOPICS[subj] && PREDEFINED_TOPICS[subj].length > 0
+      ? PREDEFINED_TOPICS[subj]
+      : [
+          'Ôn tập tổng hợp kiến thức',
+          'Luyện tập kỹ năng cơ bản',
+          'Vận dụng giải bài tập',
+          'Kiểm tra định kỳ',
+          'Đề thi nâng cao'
+        ];
+  };
+
+  const displayedTeacherTopics = getTopicsForSubject(selectedSubject, selectedDifficulty);
 
   const handleImageLoaded = (index: number, imageUrl: string) => {
     setGeneratedQuestions(prev => {
@@ -79,8 +229,6 @@ export default function TeacherDashboard() {
   }, [toast]);
 
   useEffect(() => {
-    if (!auth.currentUser) return;
-    
     let snapshotsReceived = 0;
     const totalSnapshots = 5;
 
@@ -101,10 +249,10 @@ export default function TeacherDashboard() {
       checkLoading();
     });
 
-    const qAssignments = query(
-      collection(db, 'assignments'), 
-      where('teacherId', '==', auth.currentUser.uid)
-    );
+    const qAssignments = currentTeacherUid
+      ? query(collection(db, 'assignments'), where('teacherId', '==', currentTeacherUid))
+      : query(collection(db, 'assignments'));
+
     const unsubscribeAssignments = onSnapshot(qAssignments, (snapshot) => {
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Assignment));
       list.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
@@ -136,7 +284,10 @@ export default function TeacherDashboard() {
       checkLoading();
     });
 
-    const qTemplates = query(collection(db, 'quiz_templates'), where('teacherId', '==', auth.currentUser.uid));
+    const qTemplates = currentTeacherUid
+      ? query(collection(db, 'quiz_templates'), where('teacherId', '==', currentTeacherUid))
+      : query(collection(db, 'quiz_templates'));
+
     const unsubscribeTemplates = onSnapshot(qTemplates, (snapshot) => {
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as QuizTemplate));
       list.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
@@ -154,11 +305,66 @@ export default function TeacherDashboard() {
       unsubscribeStudents();
       unsubscribeTemplates();
     };
-  }, []);
+  }, [currentTeacherUid]);
+
+  const startCamera = async () => {
+    setCameraError(null);
+    setIsCameraOpen(true);
+    try {
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+      });
+      streamRef.current = mediaStream;
+      if (videoRef.current) {
+        videoRef.current.srcObject = mediaStream;
+      }
+    } catch (err: any) {
+      console.error('Camera access error:', err);
+      setCameraError('Không thể mở camera tự động. Vui lòng cấp quyền truy cập camera hoặc nhấn "Mở camera thiết bị" bên dưới.');
+    }
+  };
+
+  const stopCamera = () => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    setIsCameraOpen(false);
+    setCameraError(null);
+  };
+
+  const capturePhoto = () => {
+    if (!videoRef.current) return;
+    const video = videoRef.current;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob((blob) => {
+        if (blob) {
+          const timestamp = new Date().toLocaleTimeString('vi-VN').replace(/:/g, '-');
+          const file = new File([blob], `Anh_chup_camera_${timestamp}.jpg`, { type: 'image/jpeg' });
+          setUploadedFiles(prev => [...prev, file]);
+          stopCamera();
+          setToast({ message: 'Đã chụp và lưu ảnh tài liệu thành công!', type: 'success' });
+        }
+      }, 'image/jpeg', 0.92);
+    }
+  };
+
+  const handleNativeCameraCapture = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setUploadedFiles(prev => [...prev, ...Array.from(e.target.files!)]);
+      setToast({ message: 'Đã thêm ảnh chụp camera!', type: 'success' });
+      stopCamera();
+    }
+  };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
-      setUploadedFiles(Array.from(e.target.files));
+      setUploadedFiles(prev => [...prev, ...Array.from(e.target.files!)]);
     }
   };
 
@@ -171,22 +377,22 @@ export default function TeacherDashboard() {
     try {
       let questions: Question[];
       if (creationMode === 'topic') {
-        questions = await generateQuestions(selectedSubject, topic, questionCount, customInstructions);
+        questions = await generateQuestions(selectedSubject, topic, questionCount, customInstructions, selectedDifficulty);
       } else if (creationMode === 'content') {
-        questions = await generateQuestionsFromContent(selectedSubject, manualContent, questionCount, customInstructions);
+        questions = await generateQuestionsFromContent(selectedSubject, manualContent, questionCount, customInstructions, selectedDifficulty);
       } else {
-        questions = await generateQuestionsFromFiles(selectedSubject, uploadedFiles, questionCount, customInstructions);
+        questions = await generateQuestionsFromFiles(selectedSubject, uploadedFiles, questionCount, customInstructions, selectedDifficulty);
       }
       setGeneratedQuestions(questions);
       
       // Only set default title if the teacher hasn't provided one
       if (!assignmentTitle.trim()) {
         if (creationMode === 'topic') {
-          setAssignmentTitle(`Đề ôn tập: ${topic}`);
+          setAssignmentTitle(topic.trim() ? `Đề ôn tập: ${topic.trim()}` : `Đề ôn tập ${selectedSubject}`);
         } else if (creationMode === 'content') {
-          setAssignmentTitle(`Đề ôn tập từ nội dung đã nhập`);
+          setAssignmentTitle(`Đề ôn tập ${selectedSubject}`);
         } else {
-          setAssignmentTitle(`Đề ôn tập từ tài liệu: ${uploadedFiles.map(f => f.name).join(', ')}`);
+          setAssignmentTitle(`Đề ôn tập ${selectedSubject}`);
         }
       }
     } catch (error) {
@@ -197,11 +403,11 @@ export default function TeacherDashboard() {
   };
 
   const handleSaveToLibrary = async () => {
-    if (!assignmentTitle || generatedQuestions.length === 0 || !auth.currentUser) return;
+    if (!assignmentTitle || generatedQuestions.length === 0 || !currentTeacherUid) return;
     
     try {
       await addDoc(collection(db, 'quiz_templates'), {
-        teacherId: auth.currentUser.uid,
+        teacherId: currentTeacherUid,
         title: assignmentTitle,
         subject: selectedSubject,
         questions: generatedQuestions,
@@ -215,7 +421,7 @@ export default function TeacherDashboard() {
   };
 
   const handleAssignFromLibrary = async (template: QuizTemplate) => {
-    if (assignToClasses.length === 0 || !auth.currentUser) {
+    if (assignToClasses.length === 0 || !currentTeacherUid) {
       alert('Vui lòng chọn ít nhất một lớp học.');
       return;
     }
@@ -227,7 +433,7 @@ export default function TeacherDashboard() {
         const newAssignmentRef = doc(collection(db, 'assignments'));
         batch.set(newAssignmentRef, {
           classId,
-          teacherId: auth.currentUser!.uid,
+          teacherId: currentTeacherUid,
           title: template.title,
           subject: template.subject,
           questions: template.questions,
@@ -246,24 +452,40 @@ export default function TeacherDashboard() {
     }
   };
 
-  const handleDeleteTemplate = async (id: string) => {
-    if (!window.confirm('Bạn có chắc chắn muốn xóa đề thi này khỏi thư viện?')) return;
-    try {
-      await deleteDoc(doc(db, 'quiz_templates', id));
-      setToast({ message: 'Đã xóa đề thi khỏi thư viện thành công!', type: 'success' });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `quiz_templates/${id}`);
-      setToast({ message: 'Lỗi khi xóa đề thi.', type: 'error' });
-    }
+  const handleDeleteTemplate = (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!id) return;
+    const template = quizTemplates.find(t => t.id === id);
+    setConfirmDeleteModal({
+      isOpen: true,
+      title: 'Xác nhận xóa mẫu đề thi',
+      message: `Bạn có đồng ý xóa đề thi "${template?.title || ''}" khỏi thư viện không?`,
+      onConfirm: async () => {
+        // Optimistic UI update
+        setQuizTemplates(prev => prev.filter(t => t.id !== id));
+        if (viewingQuizId === id) {
+          setViewingQuiz(null);
+          setViewingQuizId(null);
+        }
+        try {
+          await deleteDoc(doc(db, 'quiz_templates', id));
+          setToast({ message: 'Đã xóa đề thi khỏi thư viện thành công!', type: 'success' });
+        } catch (error) {
+          console.error('Lỗi khi xóa mẫu đề:', error);
+          handleFirestoreError(error, OperationType.DELETE, `quiz_templates/${id}`);
+          setToast({ message: 'Lỗi khi xóa đề thi.', type: 'error' });
+        }
+      }
+    });
   };
 
   const handleSendToClass = async () => {
-    if (!selectedClass || !assignmentTitle || generatedQuestions.length === 0 || !auth.currentUser) return;
+    if (!selectedClass || !assignmentTitle || generatedQuestions.length === 0 || !currentTeacherUid) return;
     
     try {
       await addDoc(collection(db, 'assignments'), {
         classId: selectedClass,
-        teacherId: auth.currentUser.uid,
+        teacherId: currentTeacherUid,
         title: assignmentTitle,
         subject: selectedSubject,
         questions: generatedQuestions,
@@ -281,15 +503,31 @@ export default function TeacherDashboard() {
     }
   };
 
-  const handleDeleteAssignment = async (id: string) => {
-    if (!window.confirm('Bạn có chắc chắn muốn xóa đề thi này?')) return;
-    try {
-      await deleteDoc(doc(db, 'assignments', id));
-      setToast({ message: 'Đã xóa đề thi thành công!', type: 'success' });
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `assignments/${id}`);
-      setToast({ message: 'Lỗi khi xóa đề thi.', type: 'error' });
-    }
+  const handleDeleteAssignment = (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!id) return;
+    const assignment = assignments.find(a => a.id === id);
+    setConfirmDeleteModal({
+      isOpen: true,
+      title: 'Xác nhận xóa đề thi',
+      message: `Bạn có đồng ý xóa đề thi "${assignment?.title || ''}" không?`,
+      onConfirm: async () => {
+        // Optimistic UI update
+        setAssignments(prev => prev.filter(a => a.id !== id));
+        if (viewingQuizId === id) {
+          setViewingQuiz(null);
+          setViewingQuizId(null);
+        }
+        try {
+          await deleteDoc(doc(db, 'assignments', id));
+          setToast({ message: 'Đã xóa đề thi thành công!', type: 'success' });
+        } catch (error) {
+          console.error('Lỗi khi xóa đề thi:', error);
+          handleFirestoreError(error, OperationType.DELETE, `assignments/${id}`);
+          setToast({ message: 'Lỗi khi xóa đề thi.', type: 'error' });
+        }
+      }
+    });
   };
 
   const handleAnalyze = async (student: UserProfile) => {
@@ -343,7 +581,7 @@ export default function TeacherDashboard() {
   };
 
   const handleReassign = async () => {
-    if (!reassigningAssignment || reassignToClasses.length === 0 || !auth.currentUser) return;
+    if (!reassigningAssignment || reassignToClasses.length === 0 || !currentTeacherUid) return;
 
     setIsReassigning(true);
     try {
@@ -352,7 +590,7 @@ export default function TeacherDashboard() {
         const newAssignmentRef = doc(collection(db, 'assignments'));
         batch.set(newAssignmentRef, {
           classId,
-          teacherId: auth.currentUser!.uid,
+          teacherId: currentTeacherUid,
           title: reassigningAssignment.title,
           subject: reassigningAssignment.subject,
           questions: reassigningAssignment.questions,
@@ -418,61 +656,61 @@ export default function TeacherDashboard() {
       )}
 
       {/* Tabs */}
-      <div className="flex bg-white p-1.5 rounded-2xl border border-stone-200 shadow-md w-full md:w-fit mx-auto overflow-x-auto no-scrollbar">
+      <div className="flex bg-white p-1.5 rounded-full border border-stone-200/90 shadow-sm w-full md:w-fit mx-auto overflow-x-auto no-scrollbar">
         <div className="flex min-w-max md:min-w-0 w-full justify-center gap-1">
           <button 
             onClick={() => setActiveTab('CLASSES')}
-            className={`flex items-center gap-2 px-4 md:px-6 py-3 rounded-xl text-xs md:text-sm font-bold transition-all whitespace-nowrap ${
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-xs md:text-sm font-semibold transition-all whitespace-nowrap ${
               activeTab === 'CLASSES' 
-                ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200 scale-105' 
-                : 'text-stone-500 hover:bg-indigo-50 hover:text-indigo-600'
+                ? 'bg-[#00A66C] text-white shadow-md shadow-emerald-600/20' 
+                : 'text-stone-600 hover:text-stone-900'
             }`}
           >
-            <Users className={`w-4 h-4 ${activeTab === 'CLASSES' ? 'animate-pulse' : ''}`} />
+            <Users className="w-4 h-4" />
             Lớp học & Đề thi
           </button>
           <button 
             onClick={() => setActiveTab('CREATE_QUIZ')}
-            className={`flex items-center gap-2 px-4 md:px-6 py-3 rounded-xl text-xs md:text-sm font-bold transition-all whitespace-nowrap ${
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-xs md:text-sm font-semibold transition-all whitespace-nowrap ${
               activeTab === 'CREATE_QUIZ' 
-                ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-200 scale-105' 
-                : 'text-stone-500 hover:bg-emerald-50 hover:text-emerald-600'
+                ? 'bg-[#00A66C] text-white shadow-md shadow-emerald-600/20' 
+                : 'text-stone-600 hover:text-stone-900'
             }`}
           >
-            <Plus className={`w-4 h-4 ${activeTab === 'CREATE_QUIZ' ? 'animate-bounce' : ''}`} />
+            <Sparkles className="w-4 h-4" />
             Tạo đề thi AI
           </button>
           <button 
             onClick={() => setActiveTab('LIBRARY')}
-            className={`flex items-center gap-2 px-4 md:px-6 py-3 rounded-xl text-xs md:text-sm font-bold transition-all whitespace-nowrap ${
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-xs md:text-sm font-semibold transition-all whitespace-nowrap ${
               activeTab === 'LIBRARY' 
-                ? 'bg-amber-500 text-white shadow-lg shadow-amber-200 scale-105' 
-                : 'text-stone-500 hover:bg-amber-50 hover:text-amber-600'
+                ? 'bg-[#00A66C] text-white shadow-md shadow-emerald-600/20' 
+                : 'text-stone-600 hover:text-stone-900'
             }`}
           >
-            <Library className={`w-4 h-4 ${activeTab === 'LIBRARY' ? 'animate-pulse' : ''}`} />
+            <BookOpen className="w-4 h-4" />
             Thư viện đề thi
           </button>
           <button 
             onClick={() => setActiveTab('STUDENTS')}
-            className={`flex items-center gap-2 px-4 md:px-6 py-3 rounded-xl text-xs md:text-sm font-bold transition-all whitespace-nowrap ${
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-xs md:text-sm font-semibold transition-all whitespace-nowrap ${
               activeTab === 'STUDENTS' 
-                ? 'bg-rose-500 text-white shadow-lg shadow-rose-200 scale-105' 
-                : 'text-stone-500 hover:bg-rose-50 hover:text-rose-600'
+                ? 'bg-[#00A66C] text-white shadow-md shadow-emerald-600/20' 
+                : 'text-stone-600 hover:text-stone-900'
             }`}
           >
-            <User className={`w-4 h-4 ${activeTab === 'STUDENTS' ? 'animate-pulse' : ''}`} />
+            <User className="w-4 h-4" />
             Học sinh
           </button>
           <button 
             onClick={() => setActiveTab('RESULTS')}
-            className={`flex items-center gap-2 px-4 md:px-6 py-3 rounded-xl text-xs md:text-sm font-bold transition-all whitespace-nowrap ${
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-xs md:text-sm font-semibold transition-all whitespace-nowrap ${
               activeTab === 'RESULTS' 
-                ? 'bg-blue-600 text-white shadow-lg shadow-blue-200 scale-105' 
-                : 'text-stone-500 hover:bg-blue-50 hover:text-blue-600'
+                ? 'bg-[#00A66C] text-white shadow-md shadow-emerald-600/20' 
+                : 'text-stone-600 hover:text-stone-900'
             }`}
           >
-            <BarChart3 className={`w-4 h-4 ${activeTab === 'RESULTS' ? 'animate-pulse' : ''}`} />
+            <BarChart3 className="w-4 h-4" />
             Kết quả học tập
           </button>
         </div>
@@ -543,29 +781,31 @@ export default function TeacherDashboard() {
                       animate={{ opacity: 1, y: 0 }}
                       whileHover={{ y: -2, boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1)' }}
                       key={as.id} 
-                      className="flex items-center justify-between p-6 bg-white border border-stone-100 rounded-2xl hover:border-indigo-200 transition-all group"
+                      className="flex items-center justify-between p-6 bg-white border border-stone-100 rounded-2xl hover:border-indigo-200 transition-all group overflow-hidden gap-4"
                     >
-                      <div className="flex items-center gap-4">
-                        <div className="w-14 h-14 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition-all shadow-sm">
+                      <div className="flex items-center gap-4 min-w-0 flex-1">
+                        <div className="w-14 h-14 shrink-0 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-600 group-hover:bg-indigo-600 group-hover:text-white transition-all shadow-sm">
                           <FileText className="w-7 h-7" />
                         </div>
-                        <div>
-                          <div className="flex items-center gap-2 mb-1">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
                             <span className="text-[10px] font-mono text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded uppercase tracking-widest font-bold">{as.subject}</span>
                             <span className="text-[10px] font-mono text-blue-600 bg-blue-50 px-2 py-0.5 rounded font-bold">Lớp: {classes.find(c => c.id === as.classId)?.name || 'N/A'}</span>
                           </div>
-                          <h4 className="font-bold text-stone-900 group-hover:text-indigo-600 transition-colors">{as.title}</h4>
+                          <h4 className="font-bold text-stone-900 group-hover:text-indigo-600 transition-colors break-all line-clamp-2" title={as.title}>{as.title}</h4>
                           <p className="text-xs text-stone-500 mt-1 flex items-center gap-2">
                             <Clock className="w-3 h-3" />
                             {as.questions.length} câu hỏi • {as.createdAt?.toDate?.() ? as.createdAt.toDate().toLocaleDateString('vi-VN') : 'Đang xử lý...'}
                           </p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 shrink-0 relative z-10">
                         <button 
                           onClick={() => {
                             setViewingQuiz(as.questions);
                             setViewingQuizTitle(as.title);
+                            setViewingQuizId(as.id);
+                            setViewingQuizType('assignment');
                           }}
                           className="p-3 text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all hover:scale-110 active:scale-95 shadow-sm bg-white border border-stone-50"
                           title="Xem nội dung đề"
@@ -593,8 +833,8 @@ export default function TeacherDashboard() {
                           <BarChart3 className="w-5 h-5" />
                         </button>
                         <button 
-                          onClick={() => handleDeleteAssignment(as.id)}
-                          className="p-3 text-rose-500 hover:bg-rose-50 rounded-xl transition-all hover:scale-110 active:scale-95 shadow-sm bg-white border border-stone-50"
+                          onClick={(e) => handleDeleteAssignment(as.id, e)}
+                          className="p-3 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-xl transition-all hover:scale-110 active:scale-95 shadow-sm bg-white border border-stone-50"
                           title="Xóa đề thi"
                         >
                           <Trash2 className="w-5 h-5" />
@@ -610,159 +850,314 @@ export default function TeacherDashboard() {
       )}
 
       {activeTab === 'CREATE_QUIZ' && (
-        <div className="max-w-3xl mx-auto space-y-6">
-          <div className="bg-white p-8 rounded-3xl border border-stone-200 shadow-sm">
-            <h3 className="text-2xl font-bold text-stone-900 mb-8 flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl bg-emerald-100 flex items-center justify-center text-emerald-600 shadow-sm">
-                <Sparkles className="w-7 h-7 animate-pulse" />
+        <div className="max-w-4xl mx-auto space-y-6">
+          <div className="bg-white p-6 sm:p-10 rounded-[28px] border border-stone-200/80 shadow-sm space-y-8">
+            {/* Header Banner */}
+            <div className="flex items-center justify-between pb-2 border-b border-stone-100">
+              <div className="flex items-center gap-4">
+                <div className="w-14 h-14 rounded-full bg-[#E6F7F0] border border-[#CCF0E1] flex items-center justify-center text-[#00A66C] shrink-0 shadow-xs">
+                  <Sparkles className="w-7 h-7" />
+                </div>
+                <div>
+                  <h3 className="text-2xl sm:text-3xl font-extrabold text-stone-900 tracking-tight">Thiết kế đề thi AI</h3>
+                  <p className="text-xs sm:text-sm text-stone-500 mt-1">Tạo đề thi phù hợp với nhu cầu học tập của bạn</p>
+                </div>
               </div>
-              Thiết kế đề thi AI
-            </h3>
+
+              {/* Decorative AI Cute Graphic Badge */}
+              <div className="hidden sm:flex items-center justify-center relative w-28 h-20 shrink-0 select-none">
+                <div className="absolute top-1 right-2 w-14 h-16 bg-[#E6F7F0] border border-[#CCF0E1] rounded-xl p-2 shadow-xs transform rotate-6">
+                  <div className="space-y-1.5 pt-1">
+                    <div className="w-full h-1 bg-[#00A66C] rounded-full" />
+                    <div className="w-3/4 h-1 bg-[#00A66C]/40 rounded-full" />
+                    <div className="w-4/5 h-1 bg-[#00A66C]/40 rounded-full" />
+                  </div>
+                </div>
+                <div className="relative z-10 w-11 h-11 bg-white border-2 border-stone-200 rounded-2xl shadow-md flex items-center justify-center -rotate-3">
+                  <div className="w-7 h-5 bg-stone-900 rounded-md flex items-center justify-center gap-1">
+                    <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-ping" />
+                    <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full" />
+                  </div>
+                </div>
+                <div className="absolute bottom-1 left-2 w-10 h-2.5 bg-amber-400 rounded-full border border-amber-500 rotate-45 shadow-xs" />
+              </div>
+            </div>
 
             <div className="space-y-8">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-widest text-stone-400 ml-2 flex items-center gap-2">
-                    <BookOpen className="w-3 h-3" />
-                    Môn học
-                  </label>
-                  <select 
-                    value={selectedSubject}
-                    onChange={(e) => setSelectedSubject(e.target.value as Subject)}
-                    className="w-full p-4 rounded-2xl border border-stone-200 outline-none focus:ring-2 focus:ring-emerald-500 appearance-none bg-stone-50 font-bold transition-all"
-                  >
-                    {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
+              {/* Subject & Question Count Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {/* MÔN HỌC */}
+                <div className="bg-white border border-stone-200/90 rounded-2xl p-5 space-y-3 shadow-xs">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-full bg-[#E6F7F0] flex items-center justify-center text-[#00A66C] shrink-0">
+                      <BookOpen className="w-4 h-4" />
+                    </div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-stone-800">MÔN HỌC</span>
+                  </div>
+                  <div className="relative">
+                    <select 
+                      value={selectedSubject}
+                      onChange={(e) => setSelectedSubject(e.target.value as Subject)}
+                      className="w-full p-3.5 pr-10 rounded-xl border border-stone-200 outline-none focus:border-[#00A66C] focus:ring-1 focus:ring-[#00A66C] appearance-none bg-stone-50/50 font-bold text-stone-800 text-sm transition-all cursor-pointer"
+                    >
+                      {teacherAllowedSubjects.map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-stone-400">
+                      <ChevronRight className="w-4 h-4 rotate-90" />
+                    </div>
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-bold uppercase tracking-widest text-stone-400 ml-2 flex items-center gap-2">
-                    <FileText className="w-3 h-3" />
-                    Số lượng câu hỏi
-                  </label>
-                  <select 
-                    value={questionCount}
-                    onChange={(e) => setQuestionCount(Number(e.target.value))}
-                    className="w-full p-4 rounded-2xl border border-stone-200 outline-none focus:ring-2 focus:ring-emerald-500 appearance-none bg-stone-50 font-bold transition-all"
-                  >
-                    {[10, 20, 30].map(n => <option key={n} value={n}>{n} câu trắc nghiệm</option>)}
-                  </select>
-                  <p className="text-[10px] text-stone-400 mt-1.5 ml-2 italic">Gợi ý: Chọn 10 câu hỏi để tạo đề thi nhanh chóng và hiệu quả!</p>
+
+                {/* SỐ LƯỢNG CÂU HỎI */}
+                <div className="bg-white border border-stone-200/90 rounded-2xl p-5 space-y-3 shadow-xs">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-8 h-8 rounded-full bg-[#EBF5FF] flex items-center justify-center text-[#2563EB] shrink-0">
+                      <FileText className="w-4 h-4" />
+                    </div>
+                    <span className="text-xs font-bold uppercase tracking-wider text-stone-800">SỐ LƯỢNG CÂU HỎI</span>
+                  </div>
+                  <div className="relative">
+                    <select 
+                      value={questionCount}
+                      onChange={(e) => setQuestionCount(Number(e.target.value))}
+                      className="w-full p-3.5 pr-10 rounded-xl border border-stone-200 outline-none focus:border-[#00A66C] focus:ring-1 focus:ring-[#00A66C] appearance-none bg-stone-50/50 font-bold text-stone-800 text-sm transition-all cursor-pointer"
+                    >
+                      {[5, 10, 15, 20, 30].map(n => <option key={n} value={n}>{n} câu trắc nghiệm</option>)}
+                    </select>
+                    <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none text-stone-400">
+                      <ChevronRight className="w-4 h-4 rotate-90" />
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-stone-500 pt-0.5">
+                    Gợi ý: Chọn <strong className="text-[#00A66C] font-bold">10</strong> câu hỏi để tạo đề thi nhanh chóng và hiệu quả!
+                  </p>
                 </div>
               </div>
 
+              {/* CHỌN NGUỒN TÀI LIỆU */}
               <div className="space-y-4">
-                <div className="flex gap-2 p-1.5 bg-stone-100 rounded-2xl w-fit shadow-inner">
+                <div className="flex items-center gap-2 text-stone-800 font-bold text-xs uppercase tracking-wider">
+                  <Folder className="w-4 h-4 text-amber-700 fill-amber-100" />
+                  CHỌN NGUỒN TÀI LIỆU
+                </div>
+
+                {/* Segmented Pills Bar */}
+                <div className="bg-[#F3F4F6] p-1.5 rounded-full flex items-center gap-1.5 w-full">
+                  <button 
+                    onClick={() => setCreationMode('file')}
+                    className={`px-6 py-2.5 rounded-full text-xs font-bold transition-all flex items-center justify-center gap-2 flex-1 sm:flex-initial cursor-pointer ${
+                      creationMode === 'file' 
+                        ? 'bg-white text-[#00A66C] border-2 border-[#00A66C] shadow-xs' 
+                        : 'text-stone-600 hover:text-stone-900'
+                    }`}
+                  >
+                    <Upload className="w-4 h-4" />
+                    Tải tệp lên
+                  </button>
                   <button 
                     onClick={() => setCreationMode('topic')}
-                    className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all ${creationMode === 'topic' ? 'bg-white text-emerald-600 shadow-md' : 'text-stone-500 hover:text-stone-700'}`}
+                    className={`px-6 py-2.5 rounded-full text-xs font-bold transition-all flex items-center justify-center gap-2 flex-1 sm:flex-initial cursor-pointer ${
+                      creationMode === 'topic' 
+                        ? 'bg-white text-[#00A66C] border-2 border-[#00A66C] shadow-xs' 
+                        : 'text-stone-600 hover:text-stone-900'
+                    }`}
                   >
+                    <Pencil className="w-4 h-4" />
                     Nhập chủ đề
                   </button>
                   <button 
                     onClick={() => setCreationMode('content')}
-                    className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all ${creationMode === 'content' ? 'bg-white text-emerald-600 shadow-md' : 'text-stone-500 hover:text-stone-700'}`}
+                    className={`px-6 py-2.5 rounded-full text-xs font-bold transition-all flex items-center justify-center gap-2 flex-1 sm:flex-initial cursor-pointer ${
+                      creationMode === 'content' 
+                        ? 'bg-white text-[#00A66C] border-2 border-[#00A66C] shadow-xs' 
+                        : 'text-stone-600 hover:text-stone-900'
+                    }`}
                   >
+                    <FileText className="w-4 h-4" />
                     Nhập văn bản
-                  </button>
-                  <button 
-                    onClick={() => setCreationMode('file')}
-                    className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all ${creationMode === 'file' ? 'bg-white text-emerald-600 shadow-md' : 'text-stone-500 hover:text-stone-700'}`}
-                  >
-                    Tải tệp lên
                   </button>
                 </div>
 
-                {creationMode === 'topic' ? (
-                  <div className="space-y-2">
-                    <label className="text-xs font-mono uppercase tracking-widest text-stone-400 ml-2">Chủ đề bài học</label>
+                {/* Mode Content */}
+                {creationMode === 'file' ? (
+                  <div className="space-y-4 pt-1">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {/* Upload Files Option */}
+                      <div className="relative group">
+                        <input 
+                          type="file" 
+                          id="file-upload"
+                          multiple
+                          accept=".doc,.docx,.pdf,image/*"
+                          onChange={handleFileChange}
+                          className="hidden"
+                        />
+                        <label 
+                          htmlFor="file-upload" 
+                          className="cursor-pointer flex flex-col items-center justify-center text-center p-6 bg-[#E6F7F0]/40 border-2 border-[#00A66C] rounded-2xl hover:bg-[#E6F7F0] transition-all min-h-[170px]"
+                        >
+                          <div className="w-12 h-12 rounded-full bg-[#E6F7F0] text-[#00A66C] flex items-center justify-center mb-3 shadow-xs">
+                            <Upload className="w-6 h-6" />
+                          </div>
+                          <p className="text-sm font-extrabold text-[#00A66C] mb-1">Upload Files</p>
+                          <p className="text-[11px] text-stone-500 leading-tight">Tải lên PDF, Word, ảnh từ máy tính</p>
+                        </label>
+                      </div>
+
+                      {/* Camera Option */}
+                      <div 
+                        onClick={startCamera}
+                        className="cursor-pointer flex flex-col items-center justify-center text-center p-6 bg-[#F3E8FF]/30 border-2 border-[#D8B4FE] hover:border-[#A855F7] rounded-2xl hover:bg-[#F3E8FF]/60 transition-all min-h-[170px]"
+                      >
+                        <div className="w-12 h-12 rounded-full bg-[#F3E8FF] text-[#A855F7] flex items-center justify-center mb-3 shadow-xs">
+                          <Camera className="w-6 h-6" />
+                        </div>
+                        <p className="text-sm font-extrabold text-[#9333EA] mb-1">Camera</p>
+                        <p className="text-[11px] text-stone-500 leading-tight">Mở camera chụp ảnh tài liệu trực tiếp</p>
+                      </div>
+
+                      {/* Drag & Drop Area */}
+                      <div className="relative border-2 border-dashed border-stone-200 rounded-2xl p-6 text-center flex flex-col items-center justify-center min-h-[170px] bg-stone-50/50 hover:border-stone-300 transition-all">
+                        <input 
+                          type="file" 
+                          id="file-upload-drag"
+                          multiple
+                          accept=".doc,.docx,.pdf,image/*"
+                          onChange={handleFileChange}
+                          className="hidden"
+                        />
+                        <label htmlFor="file-upload-drag" className="cursor-pointer flex flex-col items-center justify-center text-center w-full h-full">
+                          <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-500 border border-amber-200/80 flex items-center justify-center mb-2.5">
+                            <Folder className="w-5 h-5 fill-amber-100" />
+                          </div>
+                          <p className="text-xs font-bold text-stone-700 mb-1">Hoặc kéo thả tệp tài liệu vào đây</p>
+                          <p className="text-[10px] text-stone-400">Hỗ trợ: Word, PDF, TXT, ảnh (JPG, PNG)</p>
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* Hidden Native Camera Input */}
+                    <input 
+                      type="file" 
+                      id="native-camera-input"
+                      accept="image/*"
+                      capture="environment"
+                      onChange={handleNativeCameraCapture}
+                      className="hidden"
+                    />
+
+                    {/* File List if files exist */}
+                    {uploadedFiles.length > 0 && (
+                      <div className="space-y-2 mt-3 p-4 bg-stone-50 rounded-2xl border border-stone-200/80">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-stone-700">Danh sách tệp/ảnh đã chọn ({uploadedFiles.length}):</span>
+                          <button onClick={() => setUploadedFiles([])} className="text-[10px] text-red-500 font-bold hover:underline">Xóa tất cả</button>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {uploadedFiles.map((file, idx) => (
+                            <div key={idx} className="flex items-center justify-between p-3 bg-white rounded-xl border border-stone-200 shadow-xs">
+                              <div className="flex items-center gap-2 overflow-hidden">
+                                {file.type?.startsWith('image/') ? (
+                                  <Camera className="w-4 h-4 text-purple-600 shrink-0" />
+                                ) : (
+                                  <FileUp className="w-4 h-4 text-[#00A66C] shrink-0" />
+                                )}
+                                <span className="text-xs font-bold text-stone-800 truncate max-w-[160px]">{file.name}</span>
+                                <span className="text-[10px] text-stone-400 shrink-0">({(file.size / 1024).toFixed(0)}KB)</span>
+                              </div>
+                              <button 
+                                onClick={() => setUploadedFiles(prev => prev.filter((_, i) => i !== idx))} 
+                                className="text-stone-400 hover:text-red-500 p-1 hover:bg-stone-100 rounded transition-colors"
+                                title="Xóa tệp này"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : creationMode === 'topic' ? (
+                  <div className="space-y-2 pt-1">
+                    <label className="text-xs font-bold text-stone-700">Chủ đề bài học / Nội dung kiến thức</label>
                     <input 
                       type="text" 
-                      placeholder="VD: Phương trình bậc hai, Câu bị động..."
+                      placeholder="VD: Phương trình bậc hai, Câu bị động, Thì hiện tại đơn..."
                       value={topic}
                       onChange={(e) => setTopic(e.target.value)}
-                      className="w-full p-5 rounded-2xl border border-stone-200 outline-none focus:ring-2 focus:ring-blue-500 bg-white shadow-sm"
-                    />
-                  </div>
-                ) : creationMode === 'content' ? (
-                  <div className="space-y-2">
-                    <label className="text-xs font-mono uppercase tracking-widest text-stone-400 ml-2">Nội dung văn bản (AI sẽ tạo câu hỏi từ đây)</label>
-                    <textarea 
-                      rows={6}
-                      placeholder="Dán nội dung bài học, đoạn văn hoặc kiến thức cần kiểm tra vào đây..."
-                      value={manualContent}
-                      onChange={(e) => setManualContent(e.target.value)}
-                      className="w-full p-5 rounded-2xl border border-stone-200 outline-none focus:ring-2 focus:ring-blue-500 bg-white shadow-sm font-sans"
+                      className="w-full p-4 rounded-2xl border-2 border-[#00A66C] outline-none bg-white text-sm font-medium text-stone-800 shadow-xs"
                     />
                   </div>
                 ) : (
-                  <div className="space-y-4">
-                    <label className="text-xs font-mono uppercase tracking-widest text-stone-400 ml-2">Tải tệp lên (Word, PDF, JPG...)</label>
-                    <div className="border-2 border-dashed border-stone-200 rounded-2xl p-8 text-center hover:border-blue-400 transition-colors bg-stone-50">
-                      <input 
-                        type="file" 
-                        id="file-upload"
-                        multiple
-                        accept=".doc,.docx,.pdf,image/*"
-                        onChange={handleFileChange}
-                        className="hidden"
-                      />
-                      <label htmlFor="file-upload" className="cursor-pointer flex flex-col items-center gap-3">
-                        <Upload className="w-10 h-10 text-stone-400" />
-                        <div className="space-y-1">
-                          <p className="text-sm font-bold text-stone-700">Nhấn để chọn tệp hoặc kéo thả vào đây</p>
-                          <p className="text-[10px] text-stone-400 font-mono uppercase tracking-widest">Hỗ trợ Word, PDF, Hình ảnh</p>
-                        </div>
-                      </label>
-                    </div>
-                    {uploadedFiles.length > 0 && (
-                      <div className="space-y-2">
-                        {uploadedFiles.map((file, idx) => (
-                          <div key={idx} className="flex items-center justify-between p-3 bg-blue-50 rounded-xl border border-blue-100">
-                            <div className="flex items-center gap-2">
-                              <FileUp className="w-4 h-4 text-blue-600" />
-                              <span className="text-xs font-bold text-blue-900 truncate max-w-[200px]">{file.name}</span>
-                            </div>
-                            <button onClick={() => setUploadedFiles(prev => prev.filter((_, i) => i !== idx))} className="text-red-500 p-1 hover:bg-red-100 rounded">
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                  <div className="space-y-2 pt-1">
+                    <label className="text-xs font-bold text-stone-700">Nội dung văn bản (AI sẽ tạo câu hỏi từ đây)</label>
+                    <textarea 
+                      rows={5}
+                      placeholder="Dán nội dung bài học, đoạn văn hoặc kiến thức cần kiểm tra vào đây..."
+                      value={manualContent}
+                      onChange={(e) => setManualContent(e.target.value)}
+                      className="w-full p-4 rounded-2xl border-2 border-[#00A66C] outline-none bg-white text-sm font-medium text-stone-800 shadow-xs resize-none"
+                    />
                   </div>
                 )}
               </div>
 
+              {/* TIÊU ĐỀ ĐỀ THI (TÙY CHỌN) */}
               <div className="space-y-2">
-                <label className="text-xs font-mono uppercase tracking-widest text-stone-400 ml-2">Tiêu đề đề thi (Tùy chọn)</label>
-                <input 
-                  type="text" 
-                  placeholder="Nhập tên đề thi hoặc để trống để AI tự đặt tên..."
-                  value={assignmentTitle}
-                  onChange={(e) => setAssignmentTitle(e.target.value)}
-                  className="w-full p-4 rounded-2xl border border-stone-200 outline-none focus:ring-2 focus:ring-blue-500 bg-white shadow-sm font-bold"
-                />
+                <div className="flex items-center gap-2 text-stone-800 font-bold text-xs uppercase tracking-wider">
+                  <div className="w-4 h-4 rounded bg-indigo-100 text-indigo-600 flex items-center justify-center font-mono text-[10px] font-bold shrink-0">
+                    <FileText className="w-3 h-3" />
+                  </div>
+                  TIÊU ĐỀ ĐỀ THI (TÙY CHỌN)
+                </div>
+                <div className="relative flex items-center border-2 border-[#00A66C] rounded-2xl bg-white p-1 transition-all">
+                  <input 
+                    type="text" 
+                    placeholder="Nhập tên đề thi hoặc để trống để AI tự đặt tên..."
+                    value={assignmentTitle}
+                    onChange={(e) => setAssignmentTitle(e.target.value)}
+                    className="w-full px-4 py-3 bg-transparent text-sm font-medium text-stone-800 placeholder-stone-400 outline-none"
+                  />
+                  <span className="px-2.5 py-1 mr-2 rounded-lg bg-[#E6F7F0] text-[#00A66C] text-xs font-bold font-mono shrink-0 select-none">
+                    Aa
+                  </span>
+                </div>
               </div>
 
+              {/* YÊU CẦU BỔ SUNG (TÙY CHỌN) */}
               <div className="space-y-2">
-                <label className="text-xs font-mono uppercase tracking-widest text-stone-400 ml-2">Yêu cầu bổ sung (Tùy chọn)</label>
-                <textarea 
-                  rows={2}
-                  placeholder="VD: Tập trung vào từ vựng, độ khó nâng cao, có câu hỏi về ngữ pháp..."
-                  value={customInstructions}
-                  onChange={(e) => setCustomInstructions(e.target.value)}
-                  className="w-full p-4 rounded-2xl border border-stone-200 outline-none focus:ring-2 focus:ring-blue-500 bg-white shadow-sm font-sans text-sm"
-                />
+                <div className="flex items-center gap-2 text-stone-800 font-bold text-xs uppercase tracking-wider">
+                  <Target className="w-4 h-4 text-amber-600 shrink-0" />
+                  YÊU CẦU BỔ SUNG (TÙY CHỌN)
+                </div>
+                <div className="relative border border-stone-200 rounded-2xl bg-white p-4 hover:border-stone-300 transition-all">
+                  <textarea 
+                    rows={3}
+                    placeholder="VD: Tập trung vào từ vựng, độ khó nâng cao, có câu hỏi về ngữ pháp..."
+                    value={customInstructions}
+                    onChange={(e) => setCustomInstructions(e.target.value)}
+                    className="w-full bg-transparent text-sm text-stone-800 placeholder-stone-400 outline-none resize-none font-sans pr-6"
+                  />
+                  <Pencil className="w-4 h-4 text-stone-400 absolute bottom-3 right-3 pointer-events-none" />
+                </div>
               </div>
 
-              <button 
-                onClick={handleGenerate}
-                disabled={isGenerating || (creationMode === 'topic' ? !topic : creationMode === 'content' ? !manualContent : uploadedFiles.length === 0)}
-                className="w-full py-5 bg-emerald-600 text-white font-bold rounded-2xl hover:bg-emerald-700 disabled:bg-stone-200 transition-all flex items-center justify-center gap-3 shadow-xl shadow-emerald-100 group active:scale-95"
-              >
-                {isGenerating ? <Loader2 className="w-6 h-6 animate-spin" /> : <Sparkles className="w-6 h-6 group-hover:rotate-12 transition-transform" />}
-                Tạo đề thi tự động
-              </button>
+              {/* CTA Button & Footer Disclaimer */}
+              <div className="space-y-3 pt-2">
+                <button 
+                  onClick={handleGenerate}
+                  disabled={isGenerating || (creationMode === 'topic' ? !topic : creationMode === 'content' ? !manualContent : uploadedFiles.length === 0)}
+                  className="w-full py-4 sm:py-4.5 bg-[#00A66C] hover:bg-[#00905D] text-white font-extrabold text-base sm:text-lg rounded-2xl disabled:bg-stone-200 disabled:text-stone-400 transition-all flex items-center justify-center gap-2.5 shadow-lg shadow-[#00A66C]/20 active:scale-[0.99] cursor-pointer"
+                >
+                  {isGenerating ? <Loader2 className="w-6 h-6 animate-spin" /> : <Sparkles className="w-5 h-5 text-white" />}
+                  Tạo đề thi tự động
+                </button>
+                <p className="text-xs text-stone-500 flex items-center justify-center gap-1.5 font-medium">
+                  <CheckCircle2 className="w-4 h-4 text-[#00A66C]" />
+                  AI sẽ phân tích tài liệu và tạo đề thi phù hợp nhất cho bạn
+                </p>
+              </div>
             </div>
           </div>
 
@@ -876,32 +1271,35 @@ export default function TeacherDashboard() {
                 </div>
               ) : (
                 quizTemplates.map(template => (
-                  <div key={template.id} className="p-6 bg-white border border-stone-100 rounded-2xl hover:shadow-xl hover:border-amber-200 transition-all space-y-4 group">
-                    <div className="flex items-start justify-between">
-                      <div className="flex gap-4">
-                        <div className="w-12 h-12 rounded-xl bg-amber-50 flex items-center justify-center text-amber-600 group-hover:bg-amber-500 group-hover:text-white transition-colors">
+                  <div key={template.id} className="p-6 bg-white border border-stone-100 rounded-2xl hover:shadow-xl hover:border-amber-200 transition-all space-y-4 group overflow-hidden">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex gap-4 min-w-0 flex-1">
+                        <div className="w-12 h-12 shrink-0 rounded-xl bg-amber-50 flex items-center justify-center text-amber-600 group-hover:bg-amber-500 group-hover:text-white transition-colors">
                           <BookOpen className="w-6 h-6" />
                         </div>
-                        <div>
-                          <span className="text-[10px] font-mono text-amber-600 bg-amber-50 px-2 py-0.5 rounded uppercase tracking-widest">{template.subject}</span>
-                          <h4 className="text-lg font-bold text-stone-900 mt-1">{template.title}</h4>
-                          <p className="text-xs text-stone-500">{template.questions.length} câu hỏi • {template.createdAt?.toDate?.() ? template.createdAt.toDate().toLocaleDateString('vi-VN') : 'N/A'}</p>
+                        <div className="min-w-0 flex-1">
+                          <span className="text-[10px] font-mono text-amber-600 bg-amber-50 px-2 py-0.5 rounded uppercase tracking-widest font-bold">{template.subject}</span>
+                          <h4 className="text-lg font-bold text-stone-900 mt-1 break-all line-clamp-2" title={template.title}>{template.title}</h4>
+                          <p className="text-xs text-stone-500 mt-1">{template.questions.length} câu hỏi • {template.createdAt?.toDate?.() ? template.createdAt.toDate().toLocaleDateString('vi-VN') : 'N/A'}</p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1 shrink-0 relative z-10">
                         <button 
                           onClick={() => {
                             setViewingQuiz(template.questions);
                             setViewingQuizTitle(template.title);
+                            setViewingQuizId(template.id!);
+                            setViewingQuizType('template');
                           }}
-                          className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all"
+                          className="p-2 text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all cursor-pointer"
                           title="Xem nội dung"
                         >
                           <Eye className="w-5 h-5" />
                         </button>
                         <button 
-                          onClick={() => handleDeleteTemplate(template.id!)}
-                          className="text-stone-300 hover:text-rose-500 p-2 hover:bg-rose-50 rounded-xl transition-all"
+                          type="button"
+                          onClick={(e) => handleDeleteTemplate(template.id!, e)}
+                          className="text-rose-500 hover:text-rose-700 hover:bg-rose-50 p-2 rounded-xl transition-all cursor-pointer"
                           title="Xóa mẫu đề"
                         >
                           <Trash2 className="w-5 h-5" />
@@ -1370,9 +1768,27 @@ export default function TeacherDashboard() {
                 </div>
               </div>
 
-              <div className="p-6 border-t border-stone-100 bg-white flex justify-end">
+              <div className="p-6 border-t border-stone-100 bg-white flex justify-between items-center">
+                {viewingQuizId ? (
+                  <button 
+                    onClick={() => {
+                      if (viewingQuizType === 'assignment') {
+                        handleDeleteAssignment(viewingQuizId);
+                      } else {
+                        handleDeleteTemplate(viewingQuizId);
+                      }
+                    }}
+                    className="px-6 py-3 bg-rose-50 text-rose-600 font-bold rounded-xl hover:bg-rose-100 transition-all flex items-center gap-2"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                    Xóa đề thi này
+                  </button>
+                ) : <div />}
                 <button 
-                  onClick={() => setViewingQuiz(null)}
+                  onClick={() => {
+                    setViewingQuiz(null);
+                    setViewingQuizId(null);
+                  }}
                   className="px-8 py-3 bg-stone-900 text-white font-bold rounded-xl hover:bg-stone-800 transition-all"
                 >
                   Đóng
@@ -1460,6 +1876,128 @@ export default function TeacherDashboard() {
               </div>
             </motion.div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Confirmation Modal */}
+      <AnimatePresence>
+        {confirmDeleteModal && confirmDeleteModal.isOpen && (
+          <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-stone-100 space-y-6"
+            >
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                  <Trash2 className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-stone-900">{confirmDeleteModal.title}</h3>
+                  <p className="text-xs text-stone-500 mt-1 leading-relaxed">{confirmDeleteModal.message}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-stone-100">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteModal(null)}
+                  className="px-5 py-2.5 rounded-xl border border-stone-200 text-stone-600 font-bold hover:bg-stone-50 transition-all text-sm cursor-pointer"
+                >
+                  Không
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const action = confirmDeleteModal.onConfirm;
+                    setConfirmDeleteModal(null);
+                    action();
+                  }}
+                  className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold transition-all shadow-md hover:shadow-lg text-sm cursor-pointer"
+                >
+                  Có, xóa ngay
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+      {/* Live Camera Capture Modal */}
+      <AnimatePresence>
+        {isCameraOpen && (
+          <div className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white w-full max-w-lg rounded-3xl overflow-hidden shadow-2xl flex flex-col border border-stone-100"
+            >
+              <div className="p-4 bg-stone-900 text-white flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Camera className="w-5 h-5 text-emerald-400" />
+                  <span className="font-bold text-sm">Chụp ảnh tài liệu / Bài tập</span>
+                </div>
+                <button 
+                  onClick={stopCamera} 
+                  className="p-1 rounded-full hover:bg-stone-800 text-stone-400 hover:text-white transition-colors"
+                  title="Đóng camera"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="relative bg-black flex items-center justify-center min-h-[320px] overflow-hidden">
+                {cameraError ? (
+                  <div className="p-6 text-center space-y-4 max-w-xs">
+                    <p className="text-xs text-stone-300 font-medium leading-relaxed">{cameraError}</p>
+                    <label 
+                      htmlFor="native-camera-input" 
+                      onClick={() => stopCamera()}
+                      className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl cursor-pointer shadow-lg transition-all"
+                    >
+                      <Camera className="w-4 h-4" />
+                      Dùng máy ảnh thiết bị
+                    </label>
+                  </div>
+                ) : (
+                  <>
+                    <video 
+                      ref={videoRef} 
+                      autoPlay 
+                      playsInline 
+                      className="w-full h-[360px] object-cover"
+                    />
+                    <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded-full text-[10px] text-emerald-400 font-mono font-bold flex items-center gap-1.5">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
+                      Camera Trực Tiếp
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="p-4 bg-stone-50 border-t border-stone-200 flex items-center justify-between">
+                <label 
+                  htmlFor="native-camera-input"
+                  onClick={() => stopCamera()}
+                  className="text-xs text-stone-600 font-bold hover:text-emerald-600 flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Camera className="w-4 h-4 text-stone-400" />
+                  Mở camera hệ thống
+                </label>
+
+                {!cameraError && (
+                  <button 
+                    onClick={capturePhoto}
+                    className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl shadow-lg hover:shadow-emerald-200 transition-all flex items-center gap-2 cursor-pointer"
+                  >
+                    <Camera className="w-4 h-4" />
+                    Chụp ảnh ngay
+                  </button>
+                )}
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
     </div>

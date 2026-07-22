@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { doc, getDoc, serverTimestamp, addDoc, collection, setDoc, onSnapshot } from 'firebase/firestore';
-import { auth, db, handleFirestoreError, OperationType } from './firebase';
+import { auth, db, handleFirestoreError, OperationType, cleanFirestoreData } from './firebase';
 import { Subject, Question, UserProfile, Assignment } from './types';
 import { generateQuestions } from './services/gemini';
 
@@ -132,11 +132,11 @@ export default function App() {
               if (currentUser.email === "ttieudokho12@gmail.com") {
                 const adminProfile: UserProfile = {
                   uid: currentUser.uid,
-                  email: currentUser.email,
+                  email: currentUser.email || '',
                   displayName: 'Quản trị viên',
                   role: 'admin'
                 };
-                await setDoc(userRef, adminProfile);
+                await setDoc(userRef, cleanFirestoreData(adminProfile));
                 setUserProfile(adminProfile);
                 setAppState('ADMIN');
               } else {
@@ -146,7 +146,7 @@ export default function App() {
                   displayName: currentUser.displayName || currentUser.email?.split('@')[0] || 'User',
                   role: 'student'
                 };
-                await setDoc(userRef, defaultProfile, { merge: true });
+                await setDoc(userRef, cleanFirestoreData(defaultProfile), { merge: true });
                 setUserProfile(defaultProfile);
                 setAppState('DASHBOARD');
               }
@@ -243,9 +243,9 @@ export default function App() {
           }
         }
 
-        await addDoc(collection(db, 'results'), {
+        await addDoc(collection(db, 'results'), cleanFirestoreData({
           uid: user.uid,
-          assignmentId: currentAssignmentId,
+          assignmentId: currentAssignmentId || null,
           classId: userProfile.classId || null,
           subject: selectedSubject,
           topic: selectedTopic,
@@ -253,7 +253,7 @@ export default function App() {
           points: calculatedPoints,
           totalQuestions: questions.length,
           timestamp: serverTimestamp()
-        });
+        }));
       } catch (error) {
         handleFirestoreError(error, OperationType.CREATE, 'results');
       }
@@ -308,7 +308,7 @@ export default function App() {
 
         {appState === 'DASHBOARD' && (
           userProfile.role === 'teacher' ? (
-            <TeacherDashboard />
+            <TeacherDashboard userProfile={userProfile} />
           ) : (
             <StudentDashboard 
               userProfile={userProfile}

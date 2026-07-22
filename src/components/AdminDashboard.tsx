@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { UserPlus, Users, Trash2, Shield, GraduationCap, UserCheck, Mail, Lock, User as UserIcon, Loader2, Search, FileText, CheckCircle2, AlertCircle, Download, School, Pencil, X, BookOpenCheck } from 'lucide-react';
-import { db, auth, handleFirestoreError, OperationType } from '../firebase';
+import { db, auth, handleFirestoreError, OperationType, cleanFirestoreData } from '../firebase';
 import { collection, query, onSnapshot, doc, setDoc, deleteDoc, getDocs, where } from 'firebase/firestore';
 import { UserProfile, ClassRoom, Subject, SUBJECTS } from '../types';
 import { initializeApp, getApp, getApps } from 'firebase/app';
@@ -44,11 +44,12 @@ export default function AdminDashboard() {
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState('');
 
-  // Student Metadata States for Creation
+  // Student & Teacher Metadata States for Creation
   const [schoolName, setSchoolName] = useState('');
   const [communeName, setCommuneName] = useState('');
   const [provinceName, setProvinceName] = useState('');
   const [selectedGrades, setSelectedGrades] = useState<string[]>([]);
+  const [selectedTeacherSubjects, setSelectedTeacherSubjects] = useState<Subject[]>([]);
 
   // Bulk Create State
   const [bulkNames, setBulkNames] = useState('');
@@ -57,11 +58,12 @@ export default function AdminDashboard() {
   const [isBulkCreating, setIsBulkCreating] = useState(false);
   const [bulkResults, setBulkResults] = useState<{name: string, email?: string, status: string, message?: string}[]>([]);
 
-  // Bulk Student Metadata States
+  // Bulk Student & Teacher Metadata States
   const [bulkSchoolName, setBulkSchoolName] = useState('');
   const [bulkCommuneName, setBulkCommuneName] = useState('');
   const [bulkProvinceName, setBulkProvinceName] = useState('');
   const [bulkSelectedGrades, setBulkSelectedGrades] = useState<string[]>([]);
+  const [bulkSelectedTeacherSubjects, setBulkSelectedTeacherSubjects] = useState<Subject[]>([]);
 
   // Editing User States
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
@@ -71,7 +73,14 @@ export default function AdminDashboard() {
   const [editCommuneName, setEditCommuneName] = useState('');
   const [editProvinceName, setEditProvinceName] = useState('');
   const [editAllowedGrades, setEditAllowedGrades] = useState<string[]>([]);
+  const [editAllowedSubjects, setEditAllowedSubjects] = useState<Subject[]>([]);
   const [isUpdatingUser, setIsUpdatingUser] = useState(false);
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
 
   useEffect(() => {
     const qUsers = query(collection(db, 'users'));
@@ -100,7 +109,8 @@ export default function AdminDashboard() {
     studentSchool?: string,
     studentCommune?: string,
     studentProvince?: string,
-    studentAllowedGrades?: string[]
+    studentAllowedGrades?: string[],
+    teacherAllowedSubjects?: Subject[]
   ) => {
     const secondaryAuth = getSecondaryAuth();
     
@@ -164,10 +174,11 @@ export default function AdminDashboard() {
         communeName: userRole === 'student' ? studentCommune : undefined,
         provinceName: userRole === 'student' ? studentProvince : undefined,
         allowedGrades: userRole === 'student' ? finalAllowedGrades : undefined,
+        allowedSubjects: userRole === 'teacher' ? (teacherAllowedSubjects && teacherAllowedSubjects.length > 0 ? teacherAllowedSubjects : undefined) : undefined,
         password: password // Store the password for fallback authentication
       };
 
-      await setDoc(doc(db, 'users', newUserUid), profile);
+      await setDoc(doc(db, 'users', newUserUid), cleanFirestoreData(profile));
       
       // 3. Sign out from secondary app if auth succeeded
       if (authSucceeded) {
@@ -213,7 +224,8 @@ export default function AdminDashboard() {
       schoolName, 
       communeName, 
       provinceName, 
-      selectedGrades
+      selectedGrades,
+      selectedTeacherSubjects
     );
     
     if (result.status === 'success') {
@@ -222,6 +234,7 @@ export default function AdminDashboard() {
       setCommuneName('');
       setProvinceName('');
       setSelectedGrades([]);
+      setSelectedTeacherSubjects([]);
       alert('Tạo tài khoản thành công!');
     } else {
       setError(result.message || 'Lỗi khi tạo tài khoản');
@@ -266,7 +279,8 @@ export default function AdminDashboard() {
         bulkSchoolName, 
         bulkCommuneName, 
         bulkProvinceName, 
-        bulkSelectedGrades
+        bulkSelectedGrades,
+        bulkSelectedTeacherSubjects
       );
       results.push(res);
       // Update results live
@@ -278,6 +292,7 @@ export default function AdminDashboard() {
     setBulkCommuneName('');
     setBulkProvinceName('');
     setBulkSelectedGrades([]);
+    setBulkSelectedTeacherSubjects([]);
     
     if (results.every(r => r.status === 'success')) {
       alert(`Đã tạo thành công ${results.length} tài khoản!`);
@@ -307,41 +322,51 @@ export default function AdminDashboard() {
     document.body.removeChild(link);
   };
 
-  const handleDeleteUser = async (uid: string) => {
-    if (!confirm('Bạn có đồng ý xóa tài khoản đã chọn không?')) return;
-    
-    setLoading(true);
-    try {
-      // 1. Try server-side deletion (to delete both Auth and Firestore document)
-      const response = await fetch('/api/admin/delete-user', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uid }),
-      });
-      
-      if (response.ok) {
-        setSelectedUserIds(prev => prev.filter(id => id !== uid));
-        alert('Xóa tài khoản thành công!');
-      } else {
-        // 2. Client-side fallback: delete Firestore document directly
-        console.warn('Server-side deletion failed, attempting client-side fallback...');
-        await deleteDoc(doc(db, 'users', uid));
-        setSelectedUserIds(prev => prev.filter(id => id !== uid));
-        alert('Xóa tài khoản thành công (dự phòng)!');
+  const handleDeleteUser = (uid: string) => {
+    const targetUser = users.find(u => u.uid === uid);
+    const name = targetUser?.displayName || targetUser?.email || 'tài khoản này';
+    setConfirmModal({
+      isOpen: true,
+      title: 'Xác nhận xóa tài khoản',
+      message: `Bạn có đồng ý xóa tài khoản "${name}" không? Hành động này không thể hoàn tác.`,
+      onConfirm: async () => {
+        setLoading(true);
+        try {
+          // 1. Try server-side deletion (to delete both Auth and Firestore document)
+          const response = await fetch('/api/admin/delete-user', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uid }),
+          });
+          
+          if (response.ok) {
+            setSelectedUserIds(prev => prev.filter(id => id !== uid));
+            setUsers(prev => prev.filter(u => u.uid !== uid));
+            alert('Xóa tài khoản thành công!');
+          } else {
+            // 2. Client-side fallback: delete Firestore document directly
+            console.warn('Server-side deletion failed, attempting client-side fallback...');
+            await deleteDoc(doc(db, 'users', uid));
+            setSelectedUserIds(prev => prev.filter(id => id !== uid));
+            setUsers(prev => prev.filter(u => u.uid !== uid));
+            alert('Xóa tài khoản thành công (dự phòng)!');
+          }
+        } catch (error) {
+          console.error('Error deleting user, trying client-side fallback:', error);
+          try {
+            await deleteDoc(doc(db, 'users', uid));
+            setSelectedUserIds(prev => prev.filter(id => id !== uid));
+            setUsers(prev => prev.filter(u => u.uid !== uid));
+            alert('Xóa tài khoản thành công (dự phòng)!');
+          } catch (clientErr) {
+            console.error('Client-side fallback also failed:', clientErr);
+            alert('Không thể xóa tài khoản. Vui lòng thử lại!');
+          }
+        } finally {
+          setLoading(false);
+        }
       }
-    } catch (error) {
-      console.error('Error deleting user, trying client-side fallback:', error);
-      try {
-        await deleteDoc(doc(db, 'users', uid));
-        setSelectedUserIds(prev => prev.filter(id => id !== uid));
-        alert('Xóa tài khoản thành công (dự phòng)!');
-      } catch (clientErr) {
-        console.error('Client-side fallback also failed:', clientErr);
-        alert('Không thể xóa tài khoản. Vui lòng thử lại!');
-      }
-    } finally {
-      setLoading(false);
-    }
+    });
   };
 
   const handleStartEditUser = (user: UserProfile) => {
@@ -352,11 +377,36 @@ export default function AdminDashboard() {
     setEditCommuneName(user.communeName || '');
     setEditProvinceName(user.provinceName || '');
     setEditAllowedGrades(user.allowedGrades || []);
+    setEditAllowedSubjects(user.allowedSubjects || []);
   };
 
   const handleUpdateUser = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingUser) return;
+
+    if (editingUser.role === 'teacher') {
+      if (!editDisplayName.trim()) {
+        alert('Vui lòng nhập tên giáo viên');
+        return;
+      }
+      setIsUpdatingUser(true);
+      try {
+        const updatedProfile: Partial<UserProfile> = {
+          displayName: editDisplayName,
+          allowedSubjects: editAllowedSubjects
+        };
+        await setDoc(doc(db, 'users', editingUser.uid), cleanFirestoreData(updatedProfile), { merge: true });
+        alert('Cập nhật thông tin giáo viên thành công!');
+        setEditingUser(null);
+      } catch (error) {
+        console.error('Error updating teacher:', error);
+        alert('Lỗi khi cập nhật thông tin');
+      } finally {
+        setIsUpdatingUser(false);
+      }
+      return;
+    }
+
     if (!editDisplayName.trim()) {
       alert('Vui lòng nhập tên học sinh');
       return;
@@ -402,7 +452,7 @@ export default function AdminDashboard() {
         allowedGrades: finalAllowedGrades
       };
 
-      await setDoc(doc(db, 'users', editingUser.uid), updatedProfile, { merge: true });
+      await setDoc(doc(db, 'users', editingUser.uid), cleanFirestoreData(updatedProfile), { merge: true });
       
       alert('Cập nhật thông tin học sinh thành công!');
       setEditingUser(null);
@@ -477,64 +527,74 @@ export default function AdminDashboard() {
     }
   };
 
-  const handleDeleteCustomTopic = async (classId: string, subject: Subject, topicToDelete: string) => {
-    if (!confirm(`Bạn có chắc chắn muốn xóa chủ đề "${topicToDelete}" không?`)) return;
+  const handleDeleteCustomTopic = (classId: string, subject: Subject, topicToDelete: string) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Xác nhận xóa chủ đề',
+      message: `Bạn có chắc chắn muốn xóa chủ đề "${topicToDelete}" không?`,
+      onConfirm: async () => {
+        try {
+          const selectedClass = classes.find(c => c.id === classId);
+          if (!selectedClass) throw new Error('Không tìm thấy lớp học');
 
-    try {
-      const selectedClass = classes.find(c => c.id === classId);
-      if (!selectedClass) throw new Error('Không tìm thấy lớp học');
+          const currentCustomTopics = selectedClass.customTopics || {};
+          const currentSubjectTopics = currentCustomTopics[subject] || [];
+          const updatedSubjectTopics = currentSubjectTopics.filter(t => t !== topicToDelete);
+          
+          const updatedCustomTopics = {
+            ...currentCustomTopics,
+            [subject]: updatedSubjectTopics
+          };
 
-      const currentCustomTopics = selectedClass.customTopics || {};
-      const currentSubjectTopics = currentCustomTopics[subject] || [];
-      const updatedSubjectTopics = currentSubjectTopics.filter(t => t !== topicToDelete);
-      
-      const updatedCustomTopics = {
-        ...currentCustomTopics,
-        [subject]: updatedSubjectTopics
-      };
+          await setDoc(doc(db, 'classes', classId), {
+            customTopics: updatedCustomTopics
+          }, { merge: true });
 
-      await setDoc(doc(db, 'classes', classId), {
-        customTopics: updatedCustomTopics
-      }, { merge: true });
-
-    } catch (error) {
-      console.error('Error deleting custom topic:', error);
-      alert('Lỗi khi xóa chủ đề');
-    }
+        } catch (error) {
+          console.error('Error deleting custom topic:', error);
+          alert('Lỗi khi xóa chủ đề');
+        }
+      }
+    });
   };
 
-  const handleDeleteAllCustomTopics = async () => {
-    if (!confirm('Bạn có chắc chắn muốn xóa TOÀN BỘ chủ đề tự tạo của tất cả các lớp học không? Hành động này không thể hoàn tác.')) return;
+  const handleDeleteAllCustomTopics = () => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Xóa toàn bộ chủ đề tự tạo',
+      message: 'Bạn có chắc chắn muốn xóa TOÀN BỘ chủ đề tự tạo của tất cả các lớp học không? Hành động này không thể hoàn tác.',
+      onConfirm: async () => {
+        setLoading(true);
+        try {
+          const classesWithTopics = classes.filter(cls => {
+            if (!cls.customTopics) return false;
+            return Object.entries(cls.customTopics).some(
+              ([_, topics]) => Array.isArray(topics) && topics.length > 0
+            );
+          });
 
-    setLoading(true);
-    try {
-      const classesWithTopics = classes.filter(cls => {
-        if (!cls.customTopics) return false;
-        return Object.entries(cls.customTopics).some(
-          ([_, topics]) => Array.isArray(topics) && topics.length > 0
-        );
-      });
+          if (classesWithTopics.length === 0) {
+            alert('Không có chủ đề tự tạo nào để xóa!');
+            setLoading(false);
+            return;
+          }
 
-      if (classesWithTopics.length === 0) {
-        alert('Không có chủ đề tự tạo nào để xóa!');
-        setLoading(false);
-        return;
+          const promises = classesWithTopics.map(cls => 
+            setDoc(doc(db, 'classes', cls.id), {
+              customTopics: {}
+            }, { merge: true })
+          );
+
+          await Promise.all(promises);
+          alert('Đã xóa thành công toàn bộ chủ đề tự tạo!');
+        } catch (error) {
+          console.error('Error deleting all custom topics:', error);
+          alert('Lỗi khi xóa toàn bộ chủ đề');
+        } finally {
+          setLoading(false);
+        }
       }
-
-      const promises = classesWithTopics.map(cls => 
-        setDoc(doc(db, 'classes', cls.id), {
-          customTopics: {}
-        }, { merge: true })
-      );
-
-      await Promise.all(promises);
-      alert('Đã xóa thành công toàn bộ chủ đề tự tạo!');
-    } catch (error) {
-      console.error('Error deleting all custom topics:', error);
-      alert('Lỗi khi xóa toàn bộ chủ đề');
-    } finally {
-      setLoading(false);
-    }
+    });
   };
 
   const toggleSelectAll = () => {
@@ -551,92 +611,106 @@ export default function AdminDashboard() {
     );
   };
 
-  const handleDeleteSelected = async () => {
+  const handleDeleteSelected = () => {
     if (selectedUserIds.length === 0) return;
-    if (!confirm('Bạn có đồng ý xóa tài khoản đã chọn không?')) return;
-
-    setLoading(true);
-    try {
-      const response = await fetch('/api/admin/delete-users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uids: selectedUserIds }),
-      });
-      if (response.ok) {
-        setSelectedUserIds([]);
-        alert('Đã xóa thành công các tài khoản đã chọn!');
-      } else {
-        console.warn('Server-side bulk deletion failed, using client-side fallback...');
-        const promises = selectedUserIds.map(uid => deleteDoc(doc(db, 'users', uid)));
-        await Promise.all(promises);
-        setSelectedUserIds([]);
-        alert('Đã xóa thành công các tài khoản đã chọn (dự phòng)!');
+    setConfirmModal({
+      isOpen: true,
+      title: 'Xác nhận xóa tài khoản đã chọn',
+      message: `Bạn có đồng ý xóa ${selectedUserIds.length} tài khoản đã chọn không?`,
+      onConfirm: async () => {
+        setLoading(true);
+        try {
+          const response = await fetch('/api/admin/delete-users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uids: selectedUserIds }),
+          });
+          if (response.ok) {
+            setUsers(prev => prev.filter(u => !selectedUserIds.includes(u.uid)));
+            setSelectedUserIds([]);
+            alert('Đã xóa thành công các tài khoản đã chọn!');
+          } else {
+            console.warn('Server-side bulk deletion failed, using client-side fallback...');
+            const promises = selectedUserIds.map(uid => deleteDoc(doc(db, 'users', uid)));
+            await Promise.all(promises);
+            setUsers(prev => prev.filter(u => !selectedUserIds.includes(u.uid)));
+            setSelectedUserIds([]);
+            alert('Đã xóa thành công các tài khoản đã chọn (dự phòng)!');
+          }
+        } catch (error) {
+          console.error('Error deleting users, trying client-side fallback:', error);
+          try {
+            const promises = selectedUserIds.map(uid => deleteDoc(doc(db, 'users', uid)));
+            await Promise.all(promises);
+            setUsers(prev => prev.filter(u => !selectedUserIds.includes(u.uid)));
+            setSelectedUserIds([]);
+            alert('Đã xóa thành công các tài khoản đã chọn (dự phòng)!');
+          } catch (clientErr) {
+            console.error('Client-side fallback also failed:', clientErr);
+            alert('Có lỗi xảy ra khi xóa các tài khoản. Vui lòng thử lại!');
+          }
+        } finally {
+          setLoading(false);
+        }
       }
-    } catch (error) {
-      console.error('Error deleting users, trying client-side fallback:', error);
-      try {
-        const promises = selectedUserIds.map(uid => deleteDoc(doc(db, 'users', uid)));
-        await Promise.all(promises);
-        setSelectedUserIds([]);
-        alert('Đã xóa thành công các tài khoản đã chọn (dự phòng)!');
-      } catch (clientErr) {
-        console.error('Client-side fallback also failed:', clientErr);
-        alert('Có lỗi xảy ra khi xóa các tài khoản. Vui lòng thử lại!');
-      }
-    } finally {
-      setLoading(false);
-    }
+    });
   };
 
-  const handleDeleteAll = async () => {
+  const handleDeleteAll = () => {
     const deletableUsers = users.filter(u => u.role !== 'admin');
     if (deletableUsers.length === 0) return;
-    if (!confirm('Bạn có đồng ý xóa tài khoản đã chọn không?')) return;
-
-    setLoading(true);
-    try {
-      const uids = deletableUsers.map(u => u.uid);
-      const response = await fetch('/api/admin/delete-users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uids }),
-      });
-      if (response.ok) {
-        setSelectedUserIds([]);
-        alert('Đã xóa tất cả tài khoản người dùng thành công!');
-      } else {
-        console.warn('Server-side bulk deletion failed, using client-side fallback...');
-        const promises = uids.map(uid => deleteDoc(doc(db, 'users', uid)));
-        await Promise.all(promises);
-        setSelectedUserIds([]);
-        alert('Đã xóa tất cả tài khoản người dùng thành công (dự phòng)!');
+    setConfirmModal({
+      isOpen: true,
+      title: 'Xác nhận xóa tất cả người dùng',
+      message: `Bạn có đồng ý xóa toàn bộ ${deletableUsers.length} tài khoản người dùng không?`,
+      onConfirm: async () => {
+        setLoading(true);
+        try {
+          const uids = deletableUsers.map(u => u.uid);
+          const response = await fetch('/api/admin/delete-users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uids }),
+          });
+          if (response.ok) {
+            setUsers(prev => prev.filter(u => u.role === 'admin'));
+            setSelectedUserIds([]);
+            alert('Đã xóa tất cả tài khoản người dùng thành công!');
+          } else {
+            console.warn('Server-side bulk deletion failed, using client-side fallback...');
+            const promises = uids.map(uid => deleteDoc(doc(db, 'users', uid)));
+            await Promise.all(promises);
+            setUsers(prev => prev.filter(u => u.role === 'admin'));
+            setSelectedUserIds([]);
+            alert('Đã xóa tất cả tài khoản người dùng thành công (dự phòng)!');
+          }
+        } catch (error) {
+          console.error('Error deleting all users, trying client-side fallback:', error);
+          try {
+            const deletableUsers = users.filter(u => u.role !== 'admin');
+            const uids = deletableUsers.map(u => u.uid);
+            const promises = uids.map(uid => deleteDoc(doc(db, 'users', uid)));
+            await Promise.all(promises);
+            setUsers(prev => prev.filter(u => u.role === 'admin'));
+            setSelectedUserIds([]);
+            alert('Đã xóa tất cả tài khoản người dùng thành công (dự phòng)!');
+          } catch (clientErr) {
+            console.error('Client-side fallback also failed:', clientErr);
+            alert('Có lỗi xảy ra khi xóa các tài khoản. Vui lòng thử lại!');
+          }
+        } finally {
+          setLoading(false);
+        }
       }
-    } catch (error) {
-      console.error('Error deleting all users, trying client-side fallback:', error);
-      try {
-        const deletableUsers = users.filter(u => u.role !== 'admin');
-        const uids = deletableUsers.map(u => u.uid);
-        const promises = uids.map(uid => deleteDoc(doc(db, 'users', uid)));
-        await Promise.all(promises);
-        setSelectedUserIds([]);
-        alert('Đã xóa tất cả tài khoản người dùng thành công (dự phòng)!');
-      } catch (clientErr) {
-        console.error('Client-side fallback also failed:', clientErr);
-        alert('Có lỗi xảy ra khi xóa các tài khoản. Vui lòng thử lại!');
-      }
-    } finally {
-      setLoading(false);
-    }
+    });
   };
 
-  const handleResetAllData = async () => {
-    if (!confirm('CẢNH BÁO NGUY HIỂM!\n\nHành động này sẽ xóa hoàn toàn tất cả tài khoản học sinh, giáo viên, dữ liệu học tập (xuedu), các lớp học, đề thi và kết quả ôn luyện.\n\nChỉ giữ lại tài khoản quản trị (Admin).\n\nBạn có chắc chắn muốn tiến hành reset toàn bộ hệ thống không?')) {
-      return;
-    }
-    
-    if (!confirm('XÁC NHẬN CUỐI CÙNG!\n\nBạn chắc chắn muốn xóa sạch toàn bộ dữ liệu hệ thống chứ? Thao tác này KHÔNG THỂ HOÀN TÁC!')) {
-      return;
-    }
+  const handleResetAllData = () => {
+    setConfirmModal({
+      isOpen: true,
+      title: '⚠️ Reset toàn bộ hệ thống',
+      message: 'CẢNH BÁO: Thao tác này sẽ xóa sạch tất cả tài khoản học sinh, giáo viên, bài nộp, đề thi và các lớp học. Bạn có chắc chắn muốn tiến hành reset không?',
+      onConfirm: async () => {
 
     setLoading(true);
     try {
@@ -687,6 +761,8 @@ export default function AdminDashboard() {
     } finally {
       setLoading(false);
     }
+      }
+    });
   };
 
   const filteredUsers = users.filter(u => 
@@ -872,6 +948,49 @@ export default function AdminDashboard() {
                 </>
               )}
 
+              {role === 'teacher' && (
+                <div className="space-y-2 border border-stone-100 p-3.5 rounded-xl bg-stone-50">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-500 font-bold block">
+                      Phân công môn dạy (Tích chọn)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (selectedTeacherSubjects.length === SUBJECTS.length) {
+                          setSelectedTeacherSubjects([]);
+                        } else {
+                          setSelectedTeacherSubjects([...SUBJECTS]);
+                        }
+                      }}
+                      className="text-[10px] text-blue-600 font-bold hover:underline"
+                    >
+                      {selectedTeacherSubjects.length === SUBJECTS.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs max-h-48 overflow-y-auto p-1">
+                    {SUBJECTS.map(subj => (
+                      <label key={subj} className="flex items-center gap-2 cursor-pointer select-none text-stone-700 hover:text-stone-900 bg-white p-2 rounded-lg border border-stone-200 shadow-sm">
+                        <input 
+                          type="checkbox"
+                          checked={selectedTeacherSubjects.includes(subj)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setSelectedTeacherSubjects([...selectedTeacherSubjects, subj]);
+                            } else {
+                              setSelectedTeacherSubjects(selectedTeacherSubjects.filter(x => x !== subj));
+                            }
+                          }}
+                          className="rounded border-stone-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span className="font-medium text-stone-800 text-[11px]">{subj}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-[9px] text-stone-400 italic">Nếu không chọn môn nào, giáo viên sẽ mặc định xem được tất cả môn học.</p>
+                </div>
+              )}
+
               <p className="text-[9px] text-stone-400 ml-2 italic">* Tài khoản & mật khẩu 123456 sẽ tự sinh</p>
 
               {error && <p className="text-red-500 text-[10px] text-center font-bold">{error}</p>}
@@ -1006,6 +1125,49 @@ export default function AdminDashboard() {
                     </div>
                   </div>
                 </>
+              )}
+
+              {bulkRole === 'teacher' && (
+                <div className="space-y-2 border border-stone-100 p-3.5 rounded-xl bg-stone-50">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-500 font-bold block">
+                      Phân công môn dạy cho các giáo viên này
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (bulkSelectedTeacherSubjects.length === SUBJECTS.length) {
+                          setBulkSelectedTeacherSubjects([]);
+                        } else {
+                          setBulkSelectedTeacherSubjects([...SUBJECTS]);
+                        }
+                      }}
+                      className="text-[10px] text-blue-600 font-bold hover:underline"
+                    >
+                      {bulkSelectedTeacherSubjects.length === SUBJECTS.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs max-h-48 overflow-y-auto p-1">
+                    {SUBJECTS.map(subj => (
+                      <label key={subj} className="flex items-center gap-2 cursor-pointer select-none text-stone-700 hover:text-stone-900 bg-white p-2 rounded-lg border border-stone-200 shadow-sm">
+                        <input 
+                          type="checkbox"
+                          checked={bulkSelectedTeacherSubjects.includes(subj)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setBulkSelectedTeacherSubjects([...bulkSelectedTeacherSubjects, subj]);
+                            } else {
+                              setBulkSelectedTeacherSubjects(bulkSelectedTeacherSubjects.filter(x => x !== subj));
+                            }
+                          }}
+                          className="rounded border-stone-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span className="font-medium text-stone-800 text-[11px]">{subj}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-[9px] text-stone-400 italic">Nếu không chọn môn nào, giáo viên sẽ mặc định xem được tất cả môn học.</p>
+                </div>
               )}
 
               <button 
@@ -1277,24 +1439,32 @@ export default function AdminDashboard() {
                             {u.role === 'student' && (!u.allowedGrades || u.allowedGrades.length === 0) && (
                               <span className="text-[10px] text-stone-400 italic">Mặc định</span>
                             )}
-                            {u.role !== 'student' && <span className="text-stone-300">---</span>}
+                            {u.role === 'teacher' && (u.allowedSubjects || []).map(s => (
+                              <span key={s} className="text-[9px] bg-blue-50 text-blue-700 border border-blue-100 px-1.5 py-0.5 rounded font-bold">
+                                {s}
+                              </span>
+                            ))}
+                            {u.role === 'teacher' && (!u.allowedSubjects || u.allowedSubjects.length === 0) && (
+                              <span className="text-[10px] text-stone-400 italic">Tất cả môn</span>
+                            )}
+                            {u.role === 'admin' && <span className="text-stone-300">---</span>}
                           </div>
                         </td>
                         <td className="py-4 text-right space-x-1">
                           {u.role !== 'admin' && (
                             <>
-                              {u.role === 'student' && (
+                              {(u.role === 'student' || u.role === 'teacher') && (
                                 <button 
                                   onClick={() => handleStartEditUser(u)}
-                                  className="p-2 text-stone-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all md:opacity-0 md:group-hover:opacity-100 inline-flex items-center"
-                                  title="Chỉnh sửa chủ đề & thông tin"
+                                  className="p-2 text-stone-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all inline-flex items-center"
+                                  title={u.role === 'teacher' ? "Chỉnh sửa môn dạy & thông tin" : "Chỉnh sửa chủ đề & thông tin"}
                                 >
                                   <Pencil className="w-4 h-4" />
                                 </button>
                               )}
                               <button 
                                 onClick={() => handleDeleteUser(u.uid)}
-                                className="p-2 text-stone-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-all md:opacity-0 md:group-hover:opacity-100 inline-flex items-center"
+                                className="p-2 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-lg transition-all inline-flex items-center"
                                 title="Xóa tài khoản"
                               >
                                 <Trash2 className="w-4 h-4" />
@@ -1429,7 +1599,7 @@ export default function AdminDashboard() {
             <div className="px-6 py-4 border-b border-stone-100 flex items-center justify-between bg-stone-50">
               <h3 className="font-bold text-stone-900 flex items-center gap-2">
                 <Pencil className="w-5 h-5 text-emerald-600" />
-                Chỉnh sửa tài khoản học sinh
+                {editingUser.role === 'teacher' ? 'Chỉnh sửa tài khoản giáo viên' : 'Chỉnh sửa tài khoản học sinh'}
               </h3>
               <button 
                 onClick={() => setEditingUser(null)}
@@ -1440,89 +1610,147 @@ export default function AdminDashboard() {
             </div>
 
             <form onSubmit={handleUpdateUser} className="p-6 overflow-y-auto space-y-4">
-              <div className="space-y-1">
-                <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Họ và tên học sinh</label>
-                <input 
-                  type="text" 
-                  value={editDisplayName}
-                  onChange={(e) => setEditDisplayName(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
-                  required
-                />
-              </div>
+              {editingUser.role === 'teacher' ? (
+                <>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Họ và tên giáo viên</label>
+                    <input 
+                      type="text" 
+                      value={editDisplayName}
+                      onChange={(e) => setEditDisplayName(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+                      required
+                    />
+                  </div>
 
-              <div className="space-y-1">
-                <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Lớp học</label>
-                <select 
-                  value={editClassId}
-                  onChange={(e) => setEditClassId(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
-                  required
-                >
-                  <option value="">-- Chọn lớp --</option>
-                  {classes.map(cls => (
-                    <option key={cls.id} value={cls.id}>{cls.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Tên trường</label>
-                <input 
-                  type="text" 
-                  value={editSchoolName}
-                  onChange={(e) => setEditSchoolName(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
-                  required
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Tên xã</label>
-                <input 
-                  type="text" 
-                  value={editCommuneName}
-                  onChange={(e) => setEditCommuneName(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
-                  required
-                />
-              </div>
-
-              <div className="space-y-1">
-                <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Tên tỉnh</label>
-                <input 
-                  type="text" 
-                  value={editProvinceName}
-                  onChange={(e) => setEditProvinceName(e.target.value)}
-                  className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
-                  required
-                />
-              </div>
-
-              <div className="space-y-2 border border-stone-100 p-3 rounded-xl bg-stone-50">
-                <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 block mb-1">
-                  Chủ đề các khối lớp được học thêm
-                </label>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  {['Lớp 1', 'Lớp 2', 'Lớp 3', 'Lớp 4', 'Lớp 5'].map(g => (
-                    <label key={g} className="flex items-center gap-2 cursor-pointer select-none text-stone-700">
-                      <input 
-                        type="checkbox"
-                        checked={editAllowedGrades.includes(g)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setEditAllowedGrades([...editAllowedGrades, g]);
+                  <div className="space-y-2 border border-stone-100 p-3.5 rounded-xl bg-stone-50">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[10px] font-mono uppercase tracking-widest text-stone-500 font-bold block">
+                        Phân công môn dạy (Tích chọn)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (editAllowedSubjects.length === SUBJECTS.length) {
+                            setEditAllowedSubjects([]);
                           } else {
-                            setEditAllowedGrades(editAllowedGrades.filter(x => x !== g));
+                            setEditAllowedSubjects([...SUBJECTS]);
                           }
                         }}
-                        className="rounded border-stone-300 text-emerald-600 focus:ring-emerald-500"
-                      />
-                      {g}
+                        className="text-[10px] text-blue-600 font-bold hover:underline"
+                      >
+                        {editAllowedSubjects.length === SUBJECTS.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs max-h-52 overflow-y-auto p-1">
+                      {SUBJECTS.map(subj => (
+                        <label key={subj} className="flex items-center gap-2 cursor-pointer select-none text-stone-700 hover:text-stone-900 bg-white p-2 rounded-lg border border-stone-200 shadow-sm">
+                          <input 
+                            type="checkbox"
+                            checked={editAllowedSubjects.includes(subj)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setEditAllowedSubjects([...editAllowedSubjects, subj]);
+                              } else {
+                                setEditAllowedSubjects(editAllowedSubjects.filter(x => x !== subj));
+                              }
+                            }}
+                            className="rounded border-stone-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="font-medium text-stone-800 text-[11px]">{subj}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <p className="text-[9px] text-stone-400 italic">Nếu không chọn môn nào, giáo viên sẽ mặc định xem được tất cả môn học.</p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Họ và tên học sinh</label>
+                    <input 
+                      type="text" 
+                      value={editDisplayName}
+                      onChange={(e) => setEditDisplayName(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Lớp học</label>
+                    <select 
+                      value={editClassId}
+                      onChange={(e) => setEditClassId(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                      required
+                    >
+                      <option value="">-- Chọn lớp --</option>
+                      {classes.map(cls => (
+                        <option key={cls.id} value={cls.id}>{cls.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Tên trường</label>
+                    <input 
+                      type="text" 
+                      value={editSchoolName}
+                      onChange={(e) => setEditSchoolName(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Tên xã</label>
+                    <input 
+                      type="text" 
+                      value={editCommuneName}
+                      onChange={(e) => setEditCommuneName(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Tên tỉnh</label>
+                    <input 
+                      type="text" 
+                      value={editProvinceName}
+                      onChange={(e) => setEditProvinceName(e.target.value)}
+                      className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-2 border border-stone-100 p-3 rounded-xl bg-stone-50">
+                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 block mb-1">
+                      Chủ đề các khối lớp được học thêm
                     </label>
-                  ))}
-                </div>
-              </div>
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      {['Lớp 1', 'Lớp 2', 'Lớp 3', 'Lớp 4', 'Lớp 5'].map(g => (
+                        <label key={g} className="flex items-center gap-2 cursor-pointer select-none text-stone-700">
+                          <input 
+                            type="checkbox"
+                            checked={editAllowedGrades.includes(g)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setEditAllowedGrades([...editAllowedGrades, g]);
+                              } else {
+                                setEditAllowedGrades(editAllowedGrades.filter(x => x !== g));
+                              }
+                            }}
+                            className="rounded border-stone-300 text-emerald-600 focus:ring-emerald-500"
+                          />
+                          {g}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
 
               <div className="flex gap-3 pt-2">
                 <button 
@@ -1544,6 +1772,51 @@ export default function AdminDashboard() {
           </div>
         </div>
       )}
+
+      {/* Confirmation Modal */}
+      <AnimatePresence>
+        {confirmModal && confirmModal.isOpen && (
+          <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-stone-100 space-y-6"
+            >
+              <div className="flex items-start gap-4">
+                <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center shrink-0">
+                  <Trash2 className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-stone-900">{confirmModal.title}</h3>
+                  <p className="text-xs text-stone-500 mt-1 leading-relaxed">{confirmModal.message}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-4 border-t border-stone-100">
+                <button
+                  type="button"
+                  onClick={() => setConfirmModal(null)}
+                  className="px-5 py-2.5 rounded-xl border border-stone-200 text-stone-600 font-bold hover:bg-stone-50 transition-all text-sm cursor-pointer"
+                >
+                  Không
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const action = confirmModal.onConfirm;
+                    setConfirmModal(null);
+                    action();
+                  }}
+                  className="px-5 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold transition-all shadow-md hover:shadow-lg text-sm cursor-pointer"
+                >
+                  Có, xóa ngay
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

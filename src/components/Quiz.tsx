@@ -235,6 +235,18 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject }
         }
       }
 
+      // Default fallback vocabulary so every English quiz has vocabulary and pronunciation trial
+      if (list.length === 0) {
+        list = [
+          { word: "Vocabulary", meaning: "Từ vựng" },
+          { word: "Practice", meaning: "Luyện tập" },
+          { word: "English", meaning: "Tiếng Anh" },
+          { word: "Student", meaning: "Học sinh" },
+          { word: "Teacher", meaning: "Giáo viên" },
+          { word: "School", meaning: "Trường học" }
+        ];
+      }
+
       if (list.length > 0) {
         setVocabList(list);
         setShowVocabScreen(true);

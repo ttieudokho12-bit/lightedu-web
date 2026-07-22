@@ -72,15 +72,21 @@ async function generateContentWithRetry(options: {
         throw error;
       }
 
-      const isRateLimit = 
+      const isTransientError = 
         errorStr.includes("429") || 
+        errorStr.includes("503") || 
+        errorStr.includes("502") || 
+        errorStr.includes("500") || 
         errorStr.includes("RESOURCE_EXHAUSTED") || 
+        errorStr.includes("UNAVAILABLE") || 
+        errorStr.includes("unavailable") || 
+        errorStr.includes("overloaded") || 
         errorStr.includes("quota") || 
         errorStr.includes("limit") ||
         errorStr.includes("rate limit") ||
-        (error && (error.status === 429 || error.code === 429));
+        (error && (error.status === 429 || error.code === 429 || error.status === 503 || error.code === 503));
         
-      if (isRateLimit && attempt < retries) {
+      if (isTransientError && attempt < retries) {
         // Parse the retry delay from the error message if any
         let delay = initialDelay * Math.pow(2, attempt - 1);
         const retryMatch = errorStr.match(/retry in ([\d\.]+)/i) || errorStr.match(/retryDelay":\s*"(\d+)s/i);

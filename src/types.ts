@@ -9,6 +9,7 @@ export interface UserProfile {
   communeName?: string;
   provinceName?: string;
   allowedGrades?: string[]; // e.g., ['Lớp 1', 'Lớp 2', 'Lớp 3', 'Lớp 4', 'Lớp 5']
+  allowedSubjects?: Subject[]; // Assigned subjects for teachers
 }
 
 export interface ClassRoom {

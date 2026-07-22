@@ -10,6 +10,26 @@ export const googleProvider = new GoogleAuthProvider();
 
 export { createUserWithEmailAndPassword, signInWithEmailAndPassword, serverTimestamp };
 
+export function cleanFirestoreData<T extends Record<string, any>>(data: T): Record<string, any> {
+  const cleaned: Record<string, any> = {};
+  for (const key of Object.keys(data)) {
+    if (data[key] !== undefined) {
+      if (
+        data[key] !== null &&
+        typeof data[key] === 'object' &&
+        !Array.isArray(data[key]) &&
+        !(data[key] instanceof Date) &&
+        typeof data[key].toDate !== 'function'
+      ) {
+        cleaned[key] = cleanFirestoreData(data[key]);
+      } else {
+        cleaned[key] = data[key];
+      }
+    }
+  }
+  return cleaned;
+}
+
 export enum OperationType {
   CREATE = 'create',
   UPDATE = 'update',
