@@ -410,7 +410,7 @@ export async function getStudyAdvice(studentName: string, subject: Subject, topi
     studyAdviceCache[cacheKey] = advice;
     return advice;
   } catch (error) {
-    console.error("Error getting study advice:", error);
+    console.warn("Could not fetch study advice, using local fallback:", error);
     return "Chúc con ôn tập thật tốt và đạt kết quả cao nhất! 🌟";
   }
 }

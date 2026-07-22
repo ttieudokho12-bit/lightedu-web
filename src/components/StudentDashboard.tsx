@@ -770,6 +770,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
   const [showAllTopics, setShowAllTopics] = useState<boolean>(false);
   const [selectedExamQuestionCount, setSelectedExamQuestionCount] = useState<number>(10);
   const [selectedExamDifficulty, setSelectedExamDifficulty] = useState<string>('All');
+  const [showTeacherAssignments, setShowTeacherAssignments] = useState<boolean>(false);
   const [studyAdvice, setStudyAdvice] = useState<string>('');
   const [isAdviceLoading, setIsAdviceLoading] = useState<boolean>(false);
 
@@ -865,7 +866,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
           setStudyAdvice(advice);
         }
       } catch (err) {
-        console.error("Failed to load study advice:", err);
+        console.warn("Failed to load study advice:", err);
         if (active) {
           setStudyAdvice("Chúc con ôn luyện thật vui vẻ và gặt hái được nhiều sao vàng 10 điểm nhé! 🌟");
         }
@@ -1043,14 +1044,18 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
 
   const renderTeacherAssignmentsSection = () => {
     return (
-      <div className="bg-white/95 backdrop-blur-md p-5 sm:p-6 rounded-[28px] border border-stone-200/90 shadow-sm space-y-4 relative z-10">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3.5 border-b border-stone-100">
+      <div className="bg-white/95 backdrop-blur-md rounded-[28px] border border-stone-200/90 shadow-sm relative z-10 overflow-hidden transition-all">
+        {/* Header - Clickable to toggle show/hide */}
+        <div 
+          onClick={() => setShowTeacherAssignments(!showTeacherAssignments)}
+          className="p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-stone-50/80 transition-colors cursor-pointer select-none"
+        >
           <div className="flex items-center gap-3">
             <div className="p-2.5 bg-[#E6F7F0] text-[#00A66C] rounded-2xl border border-[#CCF0E1] shrink-0 shadow-xs">
               <FileText className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-base sm:text-lg font-black text-stone-900 tracking-tight">
                   Bài tập giáo viên giao
                 </h3>
@@ -1061,110 +1066,150 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                 )}
               </div>
               <p className="text-xs text-stone-500 font-medium mt-0.5">
-                {userProfile.classId ? `Lớp: ${userProfile.classId} • Đề kiểm tra & bài tập từ giáo viên bộ môn` : 'Nhập mã lớp để nhận bài tập do giáo viên giao'}
+                {userProfile.classId 
+                  ? `Lớp: ${userProfile.classId} • ${showTeacherAssignments ? 'Nhấn để thu gọn danh sách' : 'Bấm vào đây để xem danh sách bài tập'}` 
+                  : 'Bấm vào đây để nhập mã lớp và nhận bài tập do giáo viên giao'}
               </p>
             </div>
           </div>
 
-          {userProfile.classId && assignments.length > 0 && (
+          <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
             <button
-              onClick={() => setActiveTab('bai-tap')}
-              className="text-xs font-bold text-[#00A66C] hover:text-emerald-700 hover:underline flex items-center gap-1 shrink-0 self-start sm:self-center cursor-pointer"
+              type="button"
+              className={`px-3.5 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all shadow-xs ${
+                showTeacherAssignments 
+                  ? 'bg-stone-100 text-stone-700 hover:bg-stone-200' 
+                  : 'bg-[#00A66C] text-white hover:bg-[#00905D] shadow-emerald-200/50'
+              }`}
             >
-              <span>Xem tất cả ({assignments.length})</span>
-              <ChevronRight className="w-4 h-4" />
+              <span>{showTeacherAssignments ? 'Thu gọn' : 'Xem danh sách bài tập'}</span>
+              <ChevronDown className={`w-4 h-4 transition-transform duration-300 ${showTeacherAssignments ? 'rotate-180' : ''}`} />
             </button>
-          )}
+          </div>
         </div>
 
-        {!userProfile.classId ? (
-          <div className="p-4 sm:p-5 bg-gradient-to-r from-emerald-50 via-teal-50/50 to-blue-50/40 rounded-2xl border border-emerald-100/90 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-3.5">
-              <div className="p-3 bg-white text-[#00A66C] rounded-2xl shadow-xs border border-emerald-100 shrink-0">
-                <School className="w-6 h-6" />
-              </div>
-              <div>
-                <h4 className="text-sm font-bold text-stone-800">Bạn chưa tham gia lớp học nào</h4>
-                <p className="text-xs text-stone-500 mt-0.5">Nhập mã lớp do giáo viên cung cấp để nhận bài tập trực tiếp và đồng bộ bảng điểm lớp!</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 w-full sm:w-auto shrink-0">
-              <input 
-                type="text" 
-                placeholder="Nhập mã lớp..."
-                value={classCode}
-                onChange={(e) => setClassCode(e.target.value)}
-                className="px-3.5 py-2 text-xs font-semibold rounded-xl border border-stone-200 outline-none focus:border-[#00A66C] focus:ring-1 focus:ring-[#00A66C] bg-white w-full sm:w-40"
-              />
-              <button 
-                onClick={handleJoinClass}
-                disabled={isJoining || !classCode.trim()}
-                className="px-4 py-2 bg-[#00A66C] hover:bg-[#00905D] text-white font-extrabold text-xs rounded-xl shadow-xs disabled:bg-stone-200 disabled:text-stone-400 transition-all shrink-0 cursor-pointer"
-              >
-                {isJoining ? 'Đang vào...' : 'Vào lớp'}
-              </button>
-            </div>
-          </div>
-        ) : assignments.length === 0 ? (
-          <div className="p-4 sm:p-5 bg-stone-50/80 rounded-2xl border border-stone-200/60 text-center flex flex-col sm:flex-row items-center justify-center gap-3">
-            <CheckCircle className="w-5 h-5 text-[#00A66C] shrink-0" />
-            <p className="text-xs text-stone-600 font-medium">
-              Hiện tại lớp <strong className="text-stone-800">{userProfile.classId}</strong> chưa có bài tập mới nào từ giáo viên. Hãy chọn bài bên dưới để tự ôn luyện nhé!
-            </p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-1">
-            {assignments.slice(0, 3).map((assignment) => {
-              const isCompleted = results.some(r => r.assignmentId === assignment.id);
-              const myResult = results.find(r => r.assignmentId === assignment.id);
-              
-              return (
-                <div
-                  key={assignment.id}
-                  className={`p-4 rounded-2xl border transition-all flex flex-col justify-between group hover:shadow-md ${
-                    isCompleted 
-                      ? 'bg-emerald-50/40 border-emerald-200/80 hover:border-emerald-300' 
-                      : 'bg-rose-50/30 border-rose-200/80 hover:border-rose-300'
-                  }`}
-                >
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full bg-white text-stone-700 border border-stone-200/80 uppercase tracking-wider truncate">
-                        {assignment.subject}
-                      </span>
-                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
-                        isCompleted 
-                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' 
-                          : 'bg-rose-100 text-rose-800 border border-rose-200'
-                      }`}>
-                        {isCompleted ? (myResult ? `Đã làm (${myResult.score}/10đ)` : 'Đã làm') : 'Chưa làm'}
-                      </span>
+        {/* Collapsible Content */}
+        <AnimatePresence>
+          {showTeacherAssignments && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.25, ease: 'easeInOut' }}
+              className="px-5 sm:px-6 pb-5 sm:pb-6 pt-1 border-t border-stone-100 space-y-4"
+            >
+              {!userProfile.classId ? (
+                <div className="p-4 sm:p-5 bg-gradient-to-r from-emerald-50 via-teal-50/50 to-blue-50/40 rounded-2xl border border-emerald-100/90 flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div className="flex items-center gap-3.5">
+                    <div className="p-3 bg-white text-[#00A66C] rounded-2xl shadow-xs border border-emerald-100 shrink-0">
+                      <School className="w-6 h-6" />
                     </div>
-
-                    <h4 className="text-xs sm:text-sm font-bold text-stone-800 group-hover:text-[#00A66C] line-clamp-2 leading-snug transition-colors">
-                      {assignment.title}
-                    </h4>
+                    <div>
+                      <h4 className="text-sm font-bold text-stone-800">Bạn chưa tham gia lớp học nào</h4>
+                      <p className="text-xs text-stone-500 mt-0.5">Nhập mã lớp do giáo viên cung cấp để nhận bài tập trực tiếp và đồng bộ bảng điểm lớp!</p>
+                    </div>
                   </div>
-
-                  <div className="flex items-center justify-between pt-3 mt-3 border-t border-stone-200/50 text-[11px]">
-                    <span className="text-stone-400 font-medium">{assignment.questions.length} câu trắc nghiệm</span>
-                    <button
-                      onClick={() => onSelectAssignment(assignment)}
-                      className={`px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1 transition-all shadow-xs cursor-pointer ${
-                        isCompleted
-                          ? 'bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50'
-                          : 'bg-[#00A66C] hover:bg-[#00905D] text-white shadow-emerald-200/50'
-                      }`}
+                  <div className="flex items-center gap-2 w-full sm:w-auto shrink-0" onClick={(e) => e.stopPropagation()}>
+                    <input 
+                      type="text" 
+                      placeholder="Nhập mã lớp..."
+                      value={classCode}
+                      onChange={(e) => setClassCode(e.target.value)}
+                      className="px-3.5 py-2 text-xs font-semibold rounded-xl border border-stone-200 outline-none focus:border-[#00A66C] focus:ring-1 focus:ring-[#00A66C] bg-white w-full sm:w-40"
+                    />
+                    <button 
+                      onClick={handleJoinClass}
+                      disabled={isJoining || !classCode.trim()}
+                      className="px-4 py-2 bg-[#00A66C] hover:bg-[#00905D] text-white font-extrabold text-xs rounded-xl shadow-xs disabled:bg-stone-200 disabled:text-stone-400 transition-all shrink-0 cursor-pointer"
                     >
-                      <span>{isCompleted ? 'Làm lại' : 'Làm bài'}</span>
-                      <ArrowRight className="w-3.5 h-3.5" />
+                      {isJoining ? 'Đang vào...' : 'Vào lớp'}
                     </button>
                   </div>
                 </div>
-              );
-            })}
-          </div>
-        )}
+              ) : assignments.length === 0 ? (
+                <div className="p-4 sm:p-5 bg-stone-50/80 rounded-2xl border border-stone-200/60 text-center flex flex-col sm:flex-row items-center justify-center gap-3">
+                  <CheckCircle className="w-5 h-5 text-[#00A66C] shrink-0" />
+                  <p className="text-xs text-stone-600 font-medium">
+                    Hiện tại lớp <strong className="text-stone-800">{userProfile.classId}</strong> chưa có bài tập mới nào từ giáo viên. Hãy chọn bài bên dưới để tự ôn luyện nhé!
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-stone-600">
+                      Danh sách bài tập ({assignments.length}):
+                    </span>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveTab('bai-tap');
+                      }}
+                      className="text-xs font-bold text-[#00A66C] hover:text-emerald-700 hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>Xem đầy đủ trang bài tập</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-1">
+                    {assignments.slice(0, 6).map((assignment) => {
+                      const isCompleted = results.some(r => r.assignmentId === assignment.id);
+                      const myResult = results.find(r => r.assignmentId === assignment.id);
+                      
+                      return (
+                        <div
+                          key={assignment.id}
+                          className={`p-4 rounded-2xl border transition-all flex flex-col justify-between group hover:shadow-md ${
+                            isCompleted 
+                              ? 'bg-emerald-50/40 border-emerald-200/80 hover:border-emerald-300' 
+                              : 'bg-rose-50/30 border-rose-200/80 hover:border-rose-300'
+                          }`}
+                        >
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full bg-white text-stone-700 border border-stone-200/80 uppercase tracking-wider truncate">
+                                {assignment.subject}
+                              </span>
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${
+                                isCompleted 
+                                  ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' 
+                                  : 'bg-rose-100 text-rose-800 border border-rose-200'
+                              }`}>
+                                {isCompleted ? (myResult ? `Đã làm (${myResult.score}/10đ)` : 'Đã làm') : 'Chưa làm'}
+                              </span>
+                            </div>
+
+                            <h4 className="text-xs sm:text-sm font-bold text-stone-800 group-hover:text-[#00A66C] line-clamp-2 leading-snug transition-colors">
+                              {assignment.title}
+                            </h4>
+                          </div>
+
+                          <div className="flex items-center justify-between pt-3 mt-3 border-t border-stone-200/50 text-[11px]">
+                            <span className="text-stone-400 font-medium">{assignment.questions.length} câu trắc nghiệm</span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onSelectAssignment(assignment);
+                              }}
+                              className={`px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1 transition-all shadow-xs cursor-pointer ${
+                                isCompleted
+                                  ? 'bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50'
+                                  : 'bg-[#00A66C] hover:bg-[#00905D] text-white shadow-emerald-200/50'
+                              }`}
+                            >
+                              <span>{isCompleted ? 'Làm lại' : 'Làm bài'}</span>
+                              <ArrowRight className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     );
   };
