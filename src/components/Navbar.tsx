@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { LogOut, GraduationCap, User as UserIcon, ShieldCheck, GraduationCap as StudentIcon, Settings, Home } from 'lucide-react';
+import { LogOut, Lightbulb, User as UserIcon, ShieldCheck, GraduationCap as StudentIcon, Settings, Home } from 'lucide-react';
 import { auth, db } from '../firebase';
 import { signOut, User } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
@@ -38,7 +38,7 @@ export default function Navbar({ user, onHome }: NavbarProps) {
             title="Về Trang chủ"
           >
             <div className="p-2 bg-emerald-600 rounded-lg group-hover:scale-105 transition-transform">
-              <GraduationCap className="w-6 h-6 text-white" />
+              <Lightbulb className="w-6 h-6 text-white" />
             </div>
             <div>
               <h1 className="text-lg font-bold text-stone-900 leading-tight">Lightedu - Nơi tri thức tỏa sáng</h1>
@@ -48,7 +48,7 @@ export default function Navbar({ user, onHome }: NavbarProps) {
         ) : (
           <div className="flex items-center gap-3">
             <div className="p-2 bg-emerald-600 rounded-lg">
-              <GraduationCap className="w-6 h-6 text-white" />
+              <Lightbulb className="w-6 h-6 text-white" />
             </div>
             <div>
               <h1 className="text-lg font-bold text-stone-900 leading-tight">Lightedu - Nơi tri thức tỏa sáng</h1>

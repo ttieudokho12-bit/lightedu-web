@@ -1057,7 +1057,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="text-base sm:text-lg font-black text-stone-900 tracking-tight">
-                  Bài tập giáo viên giao
+                  Bài tập thầy cô giao
                 </h3>
                 {assignments.length > 0 && (
                   <span className="px-2.5 py-0.5 bg-[#E6F7F0] text-[#00A66C] text-xs font-black rounded-full border border-[#CCF0E1]">
@@ -1068,7 +1068,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
               <p className="text-xs text-stone-500 font-medium mt-0.5">
                 {userProfile.classId 
                   ? `Lớp: ${userProfile.classId} • ${showTeacherAssignments ? 'Nhấn để thu gọn danh sách' : 'Bấm vào đây để xem danh sách bài tập'}` 
-                  : 'Bấm vào đây để nhập mã lớp và nhận bài tập do giáo viên giao'}
+                  : 'Bấm vào đây để nhập mã lớp và nhận bài tập do thầy cô giao'}
               </p>
             </div>
           </div>
@@ -1106,7 +1106,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                     </div>
                     <div>
                       <h4 className="text-sm font-bold text-stone-800">Bạn chưa tham gia lớp học nào</h4>
-                      <p className="text-xs text-stone-500 mt-0.5">Nhập mã lớp do giáo viên cung cấp để nhận bài tập trực tiếp và đồng bộ bảng điểm lớp!</p>
+                      <p className="text-xs text-stone-500 mt-0.5">Nhập mã lớp do thầy cô cung cấp để nhận bài tập trực tiếp và đồng bộ bảng điểm lớp!</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 w-full sm:w-auto shrink-0" onClick={(e) => e.stopPropagation()}>
@@ -1130,7 +1130,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                 <div className="p-4 sm:p-5 bg-stone-50/80 rounded-2xl border border-stone-200/60 text-center flex flex-col sm:flex-row items-center justify-center gap-3">
                   <CheckCircle className="w-5 h-5 text-[#00A66C] shrink-0" />
                   <p className="text-xs text-stone-600 font-medium">
-                    Hiện tại lớp <strong className="text-stone-800">{userProfile.classId}</strong> chưa có bài tập mới nào từ giáo viên. Hãy chọn bài bên dưới để tự ôn luyện nhé!
+                    Hiện tại lớp <strong className="text-stone-800">{userProfile.classId}</strong> chưa có bài tập mới nào từ thầy cô. Hãy chọn bài bên dưới để tự ôn luyện nhé!
                   </p>
                 </div>
               ) : (
