@@ -424,7 +424,7 @@ export const SpeakingPractice: React.FC<SpeakingPracticeProps> = ({
     } else if (score >= 80) {
       setFeedback("Con đọc đúng rồi, thử đọc rõ hơn nhé! Cố lên con yêu! 🦁✨");
     } else {
-      setFeedback("Âm cuối cần rõ hơn một chút, chúng mình luyện lại nhé! AI tin bé sẽ làm được! 🐼🎈");
+      setFeedback("Âm cuối cần rõ hơn một chút, chúng mình luyện lại nhé! Cô tin bé sẽ làm được! 🐼🎈");
     }
 
     setHasEvaluated(true);
@@ -837,7 +837,7 @@ export const SpeakingPractice: React.FC<SpeakingPracticeProps> = ({
                   <Loader2 className="w-16 h-16 text-indigo-600 animate-spin" />
                   <Mic className="w-6 h-6 text-indigo-500 absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
                 </div>
-                <h3 className="text-xl font-black text-indigo-950 animate-pulse">AI đang phân tích giọng đọc...</h3>
+                <h3 className="text-xl font-black text-indigo-950 animate-pulse">Đang phân tích giọng đọc...</h3>
                 <p className="text-stone-500 text-sm mt-2 px-6 italic">
                   Đang chấm điểm và phân tích chi tiết phát âm của bé...
                 </p>
@@ -867,7 +867,7 @@ export const SpeakingPractice: React.FC<SpeakingPracticeProps> = ({
                     </div>
                     
                     <div className="flex-1">
-                      <span className="text-amber-800 font-extrabold text-[11px] block uppercase tracking-wide">Nhận xét của AI:</span>
+                      <span className="text-amber-800 font-extrabold text-[11px] block uppercase tracking-wide">Nhận xét:</span>
                       <p className="text-slate-800 font-black text-sm md:text-base leading-snug">
                         {feedback}
                       </p>
@@ -878,7 +878,7 @@ export const SpeakingPractice: React.FC<SpeakingPracticeProps> = ({
                   <div className="bg-[#f0f9ff] border-2 border-[#e0f2fe] rounded-3xl p-4 select-none shadow-xs">
                     <span className="text-[#0284c7] font-extrabold text-xs block uppercase tracking-wider mb-1">💬 Con đã đọc:</span>
                     <p className="text-slate-800 font-black text-lg md:text-xl tracking-wide italic">
-                      "{speechText || "AI chưa nghe rõ lắm con ơi..."}"
+                      "{speechText || "Chưa nghe rõ lắm con ơi..."}"
                     </p>
                   </div>
 
@@ -1099,7 +1099,7 @@ export const SpeakingPractice: React.FC<SpeakingPracticeProps> = ({
                       💡 Mẹo nhỏ
                     </span>
                     <p className="text-xs text-stone-500 font-bold leading-relaxed mt-0.5">
-                      Nói rõ ràng, phát âm chuẩn để AI nhận diện chính xác hơn nhé!
+                      Nói rõ ràng, phát âm chuẩn để hệ thống nhận diện chính xác hơn nhé!
                     </p>
                   </div>
                 </div>

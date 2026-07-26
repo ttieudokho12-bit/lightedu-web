@@ -5,10 +5,10 @@ import {
   LogOut, Calculator, Languages, Search, ChevronDown, ArrowRight, ShieldCheck, 
   Menu, X, Sparkles, BrainCircuit, Loader2, School, CheckCircle, ChevronRight,
   TrendingUp, Award, BookOpenCheck, Bookmark, Flame, Coins, Target, GraduationCap, Crown,
-  Volume2, VolumeX
+  Volume2, VolumeX, Bot, Star, Smile, Wand2, Heart, PartyPopper
 } from 'lucide-react';
 import { Subject, SUBJECTS, Assignment, UserProfile, QuizResult, PREDEFINED_TOPICS, ClassRoom } from '../types';
-import { db, auth } from '../firebase';
+import { db, auth, parseDate } from '../firebase';
 import { signOut } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, updateDoc, getDocs, orderBy, limit, setDoc } from 'firebase/firestore';
 import { analyzeStudentPerformance, getStudyAdvice } from '../services/gemini';
@@ -957,7 +957,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
     setIsAnalyzing(true);
     try {
       if (results.length === 0) {
-        alert('Bạn cần hoàn thành ít nhất một đề kiểm tra hoặc ôn tập để AI có thể phân tích kết quả.');
+        alert('Bạn cần hoàn thành ít nhất một đề kiểm tra hoặc ôn tập để hệ thống có thể phân tích kết quả.');
         setIsAnalyzing(false);
         return;
       }
@@ -1002,7 +1002,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
     // Group results by month (for last 6 sessions or months)
     const recentResults = results.slice(-6);
     return recentResults.map((res, index) => {
-      const date = res.timestamp ? res.timestamp.toDate() : new Date();
+      const date = parseDate(res.timestamp);
       const label = `Lần ${index + 1}`;
       return {
         name: label,
@@ -1289,7 +1289,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
             referrerPolicy="no-referrer"
           />
           <h4 className="text-xs font-bold text-stone-800">Cần trợ giúp học tập?</h4>
-          <p className="text-[10px] text-stone-400 mt-1 leading-relaxed">Hãy trải nghiệm phân tích lộ trình của AI cố vấn!</p>
+          <p className="text-[10px] text-stone-400 mt-1 leading-relaxed">Hãy trải nghiệm phân tích lộ trình của cố vấn học tập!</p>
           <button 
             onClick={() => setActiveTab('ket-qua')}
             className="mt-3 w-full py-2 bg-white hover:bg-[#2563eb] hover:text-white border border-stone-100 font-bold text-[10px] uppercase tracking-wider text-stone-600 rounded-xl transition-all shadow-sm"
@@ -1595,7 +1595,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                   <Sparkles className="w-8 h-8" />
                 </div>
                 <div className="space-y-1 text-center md:text-left flex-1">
-                  <h4 className="text-sm font-bold text-stone-800">Lời khuyên học tập hôm nay từ trợ lý AI 🦉</h4>
+                  <h4 className="text-sm font-bold text-stone-800">Lời khuyên học tập hôm nay 🦉</h4>
                   <p className="text-xs text-stone-500 leading-relaxed">
                     Theo thống kê, ôn tập lại các bài kiểm tra bị điểm dưới 8 là phương pháp tốt nhất để cải thiện thứ hạng của bạn nhanh chóng. Hãy sử dụng tính năng **Lịch sử làm bài** hoặc **Kết quả học tập** để bắt đầu ôn tập ngay!
                   </p>
@@ -2457,7 +2457,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                       <div className="text-center max-w-md mx-auto space-y-2 relative z-10">
                         <span className="text-[10px] font-black uppercase tracking-widest text-blue-600 bg-blue-50 px-3 py-1 rounded-full border border-blue-100 shadow-sm">BƯỚC 2</span>
                         <h4 className="text-2xl font-black text-stone-850 pt-1">Chọn chủ đề bài học 📚</h4>
-                        <p className="text-xs text-stone-500 font-extrabold leading-relaxed">Chọn chủ đề học tập để AI thiết kế đề ôn tập riêng cho con!</p>
+                        <p className="text-xs text-stone-500 font-extrabold leading-relaxed">Chọn chủ đề học tập để hệ thống thiết kế đề ôn tập riêng cho con!</p>
                       </div>
                     </div>
 
@@ -2635,7 +2635,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                         <div className="bg-amber-50/50 border border-amber-100/50 p-4 rounded-2xl flex items-start gap-2.5">
                           <Sparkles className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
                           <p className="text-[10px] text-amber-800 leading-relaxed font-semibold">
-                            AI của Lightedu sẽ ngay lập tức biên soạn đề ngẫu nhiên bám sát cấu trúc của Bộ Giáo dục để giúp con tăng tốc tư duy tối đa!
+                            Hệ thống của Lightedu sẽ ngay lập tức biên soạn đề ngẫu nhiên bám sát cấu trúc của Bộ Giáo dục để giúp con tăng tốc tư duy tối đa!
                           </p>
                         </div>
 
@@ -2645,7 +2645,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                             onClick={handleStartSelfQuiz}
                             className="w-full py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-extrabold text-sm uppercase tracking-wider rounded-2xl shadow-lg shadow-blue-100 hover:shadow-xl transition-all flex items-center justify-center gap-3 group cursor-pointer"
                           >
-                            <span className="tracking-widest">Bắt đầu ôn tập cùng AI 🚀</span>
+                            <span className="tracking-widest">Bắt đầu ôn tập ngay 🚀</span>
                             <ArrowRight className="w-4.5 h-4.5 group-hover:translate-x-1.5 transition-transform" />
                           </button>
                         </div>
@@ -2662,7 +2662,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                                 </div>
                                 <div>
                                   <h4 className="text-sm md:text-base font-extrabold text-stone-900 flex items-center gap-1.5">
-                                    Trợ lý AI khuyên con 🦉
+                                    Cố vấn học tập khuyên con 🦉
                                   </h4>
                                   <p className="text-[10px] text-stone-400 font-semibold mt-0.5">
                                     Dựa trên lịch sử học tập của con đối với chủ đề: {selectedExamTopic}
@@ -2680,7 +2680,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                               {isAdviceLoading ? (
                                 <div className="py-12 flex flex-col items-center justify-center space-y-3">
                                   <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
-                                  <p className="text-xs text-stone-400 font-semibold italic animate-pulse">Trợ lý AI đang nghiên cứu tiến trình học và chuẩn bị bí quyết cho con...</p>
+                                  <p className="text-xs text-stone-400 font-semibold italic animate-pulse">Cố vấn học tập đang nghiên cứu tiến trình học và chuẩn bị bí quyết cho con...</p>
                                 </div>
                               ) : studyAdvice ? (
                                 <div className="markdown-body text-xs md:text-sm text-stone-700 leading-relaxed bg-white/80 p-5 rounded-2xl border border-stone-100/50 shadow-inner max-h-[300px] overflow-y-auto custom-scrollbar">
@@ -2688,7 +2688,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                                 </div>
                               ) : (
                                 <div className="p-5 text-center text-xs text-stone-400 italic">
-                                  Hãy chọn chủ đề bên dưới hoặc môn học khác để trợ lý AI chuẩn bị lời khuyên học tập phù hợp nhất nhé! 🌟
+                                  Hãy chọn chủ đề bên dưới hoặc môn học khác để hệ thống chuẩn bị lời khuyên học tập phù hợp nhất nhé! 🌟
                                 </div>
                               )}
                             </div>
@@ -2721,32 +2721,43 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
               className="max-w-5xl mx-auto space-y-6"
             >
               {/* AI performance analyzer action box */}
-              <div className="bg-stone-900 text-white rounded-3xl p-6 md:p-8 flex flex-col md:flex-row md:items-center justify-between gap-6 relative overflow-hidden shadow-xl shadow-stone-900/10 border border-stone-800">
-                <div className="absolute inset-0 bg-gradient-to-r from-blue-500/10 to-indigo-500/10 pointer-events-none"></div>
+              <div className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white rounded-3xl p-6 md:p-8 flex flex-col md:flex-row md:items-center justify-between gap-6 relative overflow-hidden shadow-xl shadow-purple-500/20 border border-purple-400/30">
+                <div className="absolute -right-6 -bottom-6 opacity-15 pointer-events-none text-white">
+                  <Bot className="w-40 h-40" />
+                </div>
+                <div className="absolute right-32 top-2 opacity-20 pointer-events-none text-amber-300 animate-pulse">
+                  <Star className="w-10 h-10 fill-amber-300" />
+                </div>
+                <div className="absolute left-1/2 top-4 opacity-15 pointer-events-none text-pink-200">
+                  <Sparkles className="w-8 h-8" />
+                </div>
                 <div className="space-y-2 relative z-10">
-                  <div className="inline-flex items-center gap-1.5 bg-blue-500/10 border border-blue-500/20 px-3 py-1 rounded-full text-blue-400 text-[10px] font-bold uppercase tracking-widest">
-                    <Sparkles className="w-3.5 h-3.5" />
+                  <div className="inline-flex items-center gap-1.5 bg-white/20 backdrop-blur-md border border-white/30 px-3.5 py-1 rounded-full text-white text-[10px] font-bold uppercase tracking-widest shadow-sm">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-300" />
                     <span>Lộ trình cá nhân hóa</span>
                   </div>
-                  <h3 className="text-xl md:text-2xl font-bold">Cố vấn học tập AI</h3>
-                  <p className="text-xs text-stone-400 max-w-lg leading-relaxed">
-                    Dựa trên toàn bộ kết quả luyện tập của bạn, AI sẽ phân tích chi tiết điểm mạnh, điểm yếu và gợi ý lộ trình ôn tập giúp bạn tiến bộ nhanh nhất!
+                  <h3 className="text-xl md:text-2xl font-bold flex items-center gap-2">
+                    <span>Cố vấn học tập</span>
+                    <Bot className="w-6 h-6 text-pink-200 inline-block animate-bounce" />
+                  </h3>
+                  <p className="text-xs text-purple-100 max-w-lg leading-relaxed">
+                    Dựa trên toàn bộ kết quả luyện tập của bạn, hệ thống sẽ phân tích chi tiết điểm mạnh, điểm yếu và gợi ý lộ trình ôn tập giúp bạn tiến bộ nhanh nhất!
                   </p>
                 </div>
                 <button
                   onClick={handleAnalyzeSelf}
                   disabled={isAnalyzing}
-                  className="px-6 py-4 bg-blue-600 hover:bg-blue-700 disabled:bg-stone-700 text-white font-extrabold text-xs uppercase tracking-wider rounded-xl transition-all shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2 group shrink-0 relative z-10"
+                  className="px-6 py-4 bg-white hover:bg-amber-50 disabled:bg-white/60 text-indigo-700 font-extrabold text-xs uppercase tracking-wider rounded-2xl transition-all shadow-xl shadow-black/10 flex items-center justify-center gap-2 group shrink-0 relative z-10 hover:scale-105 active:scale-95"
                 >
                   {isAnalyzing ? (
                     <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
                       <span>Đang phân tích...</span>
                     </>
                   ) : (
                     <>
-                      <BrainCircuit className="w-4 h-4 text-blue-200 group-hover:rotate-12 transition-transform" />
-                      <span>Phân tích lộ trình AI</span>
+                      <Wand2 className="w-4 h-4 text-purple-600 group-hover:rotate-12 transition-transform" />
+                      <span>Phân tích lộ trình</span>
                     </>
                   )}
                 </button>
@@ -2776,7 +2787,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                       </thead>
                       <tbody className="divide-y divide-stone-50">
                         {results.map((res) => {
-                          const date = res.timestamp ? res.timestamp.toDate() : new Date();
+                          const date = parseDate(res.timestamp);
                           const scorePercent = (res.score / 10) * 100;
                           let statusColor = 'text-red-500 bg-red-50 border-red-100';
                           if (res.score >= 8.0) statusColor = 'text-emerald-500 bg-emerald-50 border-emerald-100';
@@ -3062,7 +3073,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                 {[
                   { title: 'Chăm Chỉ Vô Song', desc: 'Đã hoàn thành hơn 5 bài trắc nghiệm tự chọn', unlocked: results.length >= 5, icon: Flame, color: 'text-amber-500 bg-amber-50' },
                   { title: 'Thủ Khoa Đề Thi', desc: 'Đạt điểm 10.0 tuyệt đối trong ít nhất 1 đề kiểm tra', unlocked: results.some(r => r.score === 10), icon: Trophy, color: 'text-red-500 bg-red-50' },
-                  { title: 'Bạn Đồng Hành AI', desc: 'Đã sử dụng tư vấn học tập AI để phân tích kết quả', unlocked: results.length > 0, icon: Sparkles, color: 'text-blue-500 bg-blue-50' },
+                  { title: 'Bạn Đồng Hành', desc: 'Đã sử dụng tư vấn học tập để phân tích kết quả', unlocked: results.length > 0, icon: Sparkles, color: 'text-blue-500 bg-blue-50' },
                   { title: 'Chuyên Gia Toán Học', desc: 'Đạt điểm trung bình Toán trên 8.0', unlocked: results.filter(r => r.subject.startsWith('Toán')).length > 0 && subjectAverages['Toán'] >= 8, icon: Calculator, color: 'text-indigo-500 bg-indigo-50' },
                   { title: 'Nhà Văn Nhí Tài Năng', desc: 'Đạt điểm trung bình Tiếng Việt trên 8.0', unlocked: results.filter(r => r.subject === 'Tiếng Việt').length > 0 && subjectAverages['Tiếng Việt'] >= 8, icon: BookOpen, color: 'text-emerald-500 bg-emerald-50' },
                   { title: 'Chiến Binh Đề Thi', desc: 'Đã tham gia lớp học và nhận đề thi của thầy cô', unlocked: !!userProfile.classId, icon: School, color: 'text-[#2563eb] bg-blue-50' }
@@ -3107,8 +3118,8 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
             >
               {[
                 { title: 'Thầy cô vừa giao đề thi mới', desc: 'Bài ôn tập cuối học kỳ 2 môn Toán lớp 5 đã được mở. Con hãy cố gắng hoàn thành trước ngày 22/07 nhé.', time: '2 giờ trước', type: 'assignment' },
-                { title: 'Trợ lý AI vừa phân tích kết quả mới', desc: 'Có tiến trình học tập vượt bậc trong môn Tiếng Anh! Hãy xem lộ trình để giữ vững phong độ.', time: '1 ngày trước', type: 'ai' },
-                { title: 'Cập nhật hệ thống Lightedu v2.0', desc: 'Trải nghiệm giao diện học tập thế hệ mới, tối ưu hóa biểu đồ điểm và tốc độ chấm thi bằng AI.', time: '3 ngày trước', type: 'system' }
+                { title: 'Trợ lý học tập vừa phân tích kết quả mới', desc: 'Có tiến trình học tập vượt bậc trong môn Tiếng Anh! Hãy xem lộ trình để giữ vững phong độ.', time: '1 ngày trước', type: 'ai' },
+                { title: 'Cập nhật hệ thống Lightedu v2.0', desc: 'Trải nghiệm giao diện học tập thế hệ mới, tối ưu hóa biểu đồ điểm và tốc độ chấm thi tự động.', time: '3 ngày trước', type: 'system' }
               ].map((notif, idx) => (
                 <div key={idx} className="bg-white p-5 rounded-2xl border border-stone-100 shadow-sm flex items-start gap-4 hover:border-blue-100 hover:shadow-md transition-all">
                   <div className={`p-3 rounded-xl shrink-0 ${
@@ -3241,7 +3252,7 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
 
                   <div className="flex items-center justify-between p-4 bg-stone-50 rounded-2xl border border-stone-100 text-xs">
                     <div>
-                      <h4 className="font-bold text-stone-700">Tự động phát giọng đọc đề thi AI</h4>
+                      <h4 className="font-bold text-stone-700">Tự động phát giọng đọc đề thi</h4>
                       <p className="text-[10px] text-stone-400 mt-0.5">Đọc câu hỏi bằng tiếng Việt khi làm đề</p>
                     </div>
                     <input type="checkbox" defaultChecked className="w-4 h-4 text-[#2563eb]" />
@@ -3291,20 +3302,20 @@ Kính gửi Quý phụ huynh và các em học sinh thân mến,
 Trong thời đại công nghệ số, việc tự học và ôn luyện kiến thức trực tiếp trực tuyến đã trở thành chìa khóa vàng giúp các em học sinh bứt phá trong học tập. Lightedu ra đời với sứ mệnh mang đến một môi trường học tập Chủ động – Sáng tạo – Đầy hứng khởi dành riêng cho học sinh Tiểu học và Trung học.
 
 🚀 ƯU ĐIỂM VƯỢT TRỘI CỦA LIGHTEDU:
-1. Tự Tạo Đề Ôn Luyện Bằng AI: Học sinh không còn bị bó buộc trong những bộ đề mẫu cũ kỹ. Với trí tuệ nhân tạo Gemini tích hợp, các em chỉ cần chọn môn học hoặc tự nhập chủ đề mong muốn (Ví dụ: "Phép cộng trong phạm vi 100", "Từ vựng tiếng Anh chủ đề gia đình", "Ki-lô-gam và Lít"), hệ thống sẽ ngay lập tức biên soạn một bộ đề trắc nghiệm chuẩn kiến thức với độ khó tùy chọn (Dễ, Vừa, Khó).
+1. Tự Tạo Đề Ôn Luyện Tự Động: Học sinh không còn bị bó buộc trong những bộ đề mẫu cũ kỹ. Hệ thống tích hợp thông minh cho phép các em chỉ cần chọn môn học hoặc tự nhập chủ đề mong muốn (Ví dụ: "Phép cộng trong phạm vi 100", "Từ vựng tiếng Anh chủ đề gia đình", "Ki-lô-gam và Lít"), hệ thống sẽ ngay lập tức biên soạn một bộ đề trắc nghiệm chuẩn kiến thức với độ khó tùy chọn (Dễ, Vừa, Khó).
 2. Nhận Đề Kiểm Tra Trực Tiếp Từ Giáo Viên: Học sinh dễ dàng tham gia lớp học bằng Mã Lớp (Class Code) để nhận bài tập, đề kiểm tra chính thức và ôn luyện theo đúng lộ trình trên lớp.
 3. Nhận Diện Tiến Độ Bằng Màu Sắc Trực Quan:
    - 🟢 Màu xanh lá (Đã hoàn thành): Đánh dấu các bài tập, chủ đề đã hoàn thành xuất sắc, giúp con tự tin tiến bước.
    - 🔴 Màu đỏ (Chưa làm): Nhắc nhở trực quan những bài tập còn bỏ ngỏ, giúp phụ huynh và học sinh dễ dàng theo dõi mà không sợ bỏ sót bài vở.
-4. Cố Vấn Học Tập AI Cá Nhân Hóa: Sau mỗi bài kiểm tra, trợ lý AI thông minh sẽ phân tích kết quả thực tế, chỉ ra điểm mạnh, điểm cần khắc phục và gợi ý lộ trình học tập tối ưu riêng cho từng em.
+4. Cố Vấn Học Tập Cá Nhân Hóa: Sau mỗi bài kiểm tra, trợ lý thông minh sẽ phân tích kết quả thực tế, chỉ ra điểm mạnh, điểm cần khắc phục và gợi ý lộ trình học tập tối ưu riêng cho từng em.
 5. Hệ Thống Điểm Thưởng XuEdu & Bảng Xếp Hạng Đầy Động Lực: Khi hoàn thành tốt các bài làm, học sinh sẽ nhận được điểm thưởng XuEdu để tranh tài trên Bảng xếp hạng Lớp học và Trường học, tạo động lực cạnh tranh lành mạnh giúp các em say mê học tập hơn.
 
 📖 HƯỚNG DẪN SỬ DỤNG CHI TIẾT DÀNH CHO HỌC SINH:
 - Bước 1: Đăng nhập bằng tài khoản được cấp, cập nhật khối lớp của mình tại tab "Cài đặt" để hiển thị đúng chương trình học.
 - Bước 2: Tại tab "Đề kiểm tra của GV", nhập Mã Lớp được Thầy/Cô cấp để đồng bộ hóa bài tập.
 - Bước 3: Đề thi đã hoàn thành sẽ chuyển sang màu xanh lá (🟢 Đã hoàn thành). Đề thi chưa làm sẽ có màu đỏ (🔴 Chưa làm). Hãy cố gắng làm bài đầy đủ nhé!
-- Bước 4: Tự ôn tập tại tab "Trang chủ" bằng cách chọn môn học, click các chủ đề gợi ý hoặc tự gõ chủ đề bất kỳ để AI tạo bộ câu hỏi chất lượng tức thì.
-- Bước 5: Xem sự tiến bộ vượt bậc qua biểu đồ học tập tại tab "Kết quả học tập", và click "Cố vấn AI" để nhận lời khuyên đắt giá!`;
+- Bước 4: Tự ôn tập tại tab "Trang chủ" bằng cách chọn môn học, click các chủ đề gợi ý hoặc tự gõ chủ đề bất kỳ để hệ thống tạo bộ câu hỏi chất lượng tức thì.
+- Bước 5: Xem sự tiến bộ vượt bậc qua biểu đồ học tập tại tab "Kết quả học tập", và click "Cố vấn học tập" để nhận lời khuyên đắt giá!`;
                         navigator.clipboard.writeText(adText);
                         setCopied(true);
                         setTimeout(() => setCopied(false), 2000);
@@ -3339,13 +3350,13 @@ Trong thời đại công nghệ số, việc tự học và ôn luyện kiến 
                       
                       <p className="font-bold text-stone-800">🚀 ƯU ĐIỂM VƯỢT TRỘI CỦA LIGHTEDU:</p>
                       <ul className="list-decimal pl-4 space-y-2">
-                        <li><strong>Tự Tạo Đề Ôn Luyện Bằng AI</strong>: Học sinh không còn bị bó buộc trong các bộ đề mẫu cũ kỹ. Với trí tuệ nhân tạo Gemini tích hợp, các em chỉ cần chọn môn học hoặc tự nhập chủ đề mong muốn, hệ thống sẽ ngay lập tức biên soạn đề thi chuẩn.</li>
+                        <li><strong>Tự Tạo Đề Ôn Luyện Tự Động</strong>: Học sinh không còn bị bó buộc trong các bộ đề mẫu cũ kỹ. Các em chỉ cần chọn môn học hoặc tự nhập chủ đề mong muốn, hệ thống sẽ ngay lập tức biên soạn đề thi chuẩn.</li>
                         <li><strong>Nhận Đề Kiểm Tra Từ Giáo Viên</strong>: Tham gia lớp học bằng mã lớp để đồng bộ đề từ giáo viên.</li>
                         <li><strong>Màu Sắc Nhận Diện Tiến Độ</strong>: 
                           <br />🟢 <span className="text-emerald-600 font-bold">Màu xanh lá (Đã hoàn thành)</span>: Bài thi đã làm xong.
                           <br />🔴 <span className="text-rose-600 font-bold">Màu đỏ (Chưa làm)</span>: Bài thi cần hoàn thành, giúp dễ dàng kiểm soát bài vở.
                         </li>
-                        <li><strong>Cố Vấn Học Tập AI Cá Nhân</strong>: Phân tích chi tiết và đề xuất lộ trình dựa trên kết quả thực tế.</li>
+                        <li><strong>Cố Vấn Học Tập Cá Nhân</strong>: Phân tích chi tiết và đề xuất lộ trình dựa trên kết quả thực tế.</li>
                         <li><strong>Tích Lũy XuEdu Đổi Điểm Thưởng</strong>: Tạo động lực cạnh tranh lành mạnh trên Bảng xếp hạng.</li>
                       </ul>
 
@@ -3355,7 +3366,7 @@ Trong thời đại công nghệ số, việc tự học và ôn luyện kiến 
                         <li>Nhập Mã Lớp của giáo viên tại tab "Đề kiểm tra của GV".</li>
                         <li>Làm bài tập: Bài đã làm hiện chữ xanh lá, chưa làm hiện chữ đỏ.</li>
                         <li>Ôn luyện tự do trên Trang chủ bằng các chủ đề gợi ý hoặc gõ chủ đề bất kỳ.</li>
-                        <li>Xem biểu đồ học tập và click "Cố vấn AI" để thăng hạng tiến bộ.</li>
+                        <li>Xem biểu đồ học tập và click "Cố vấn học tập" để thăng hạng tiến bộ.</li>
                       </ol>
                     </div>
                   </div>
@@ -3382,7 +3393,7 @@ Trong thời đại công nghệ số, việc tự học và ôn luyện kiến 
                             <span className="px-1.5 py-0.5 text-[8px] bg-blue-50 text-[#2563eb] rounded-md font-bold uppercase">Cài đặt</span>
                           </h4>
                           <p className="text-[11px] text-stone-500 leading-relaxed font-normal">
-                            Đầu tiên, em vào tab <strong className="text-stone-700">Tài khoản</strong> hoặc <strong className="text-stone-700">Cài đặt</strong> để chọn khối lớp chính xác của mình (Lớp 1 đến Lớp 5). Hệ thống sẽ tự động điều chỉnh hệ thống chủ đề gợi ý và bộ câu hỏi AI sao cho phù hợp nhất với trình độ khối lớp của em.
+                            Đầu tiên, em vào tab <strong className="text-stone-700">Tài khoản</strong> hoặc <strong className="text-stone-700">Cài đặt</strong> để chọn khối lớp chính xác của mình (Lớp 1 đến Lớp 5). Hệ thống sẽ tự động điều chỉnh hệ thống chủ đề gợi ý và bộ câu hỏi sao cho phù hợp nhất với trình độ khối lớp của em.
                           </p>
                         </div>
                       </div>
@@ -3429,11 +3440,11 @@ Trong thời đại công nghệ số, việc tự học và ôn luyện kiến 
                         </div>
                         <div className="space-y-1 pt-1.5">
                           <h4 className="text-xs font-bold text-stone-800 flex items-center gap-2">
-                            Tự Ôn Tập Tự Do Bằng AI
+                            Tự Ôn Tập Tự Do
                             <span className="px-1.5 py-0.5 text-[8px] bg-purple-50 text-purple-600 rounded-md font-bold uppercase">Trang chủ</span>
                           </h4>
                           <p className="text-[11px] text-stone-500 leading-relaxed font-normal">
-                            Ngoài các bài thi của GV, em hãy vào tab <strong className="text-stone-700">Trang chủ</strong>, chọn môn học (Toán học, Tiếng Việt, Tiếng Anh, Khoa học...), rồi click vào bất kỳ chủ đề nào có sẵn. Em cũng có thể tự gõ một chủ đề tùy thích (ví dụ: *"Bảng nhân 5"*, *"Câu ghép"*), trợ lý AI sẽ tự soạn bộ đề chất lượng cao cho em ngay tức thì.
+                            Ngoài các bài thi của GV, em hãy vào tab <strong className="text-stone-700">Trang chủ</strong>, chọn môn học (Toán học, Tiếng Việt, Tiếng Anh, Khoa học...), rồi click vào bất kỳ chủ đề nào có sẵn. Em cũng có thể tự gõ một chủ đề tùy thích (ví dụ: *"Bảng nhân 5"*, *"Câu ghép"*), trợ lý học tập sẽ tự soạn bộ đề chất lượng cao cho em ngay tức thì.
                           </p>
                         </div>
                       </div>
@@ -3446,10 +3457,10 @@ Trong thời đại công nghệ số, việc tự học và ôn luyện kiến 
                         <div className="space-y-1 pt-1.5">
                           <h4 className="text-xs font-bold text-stone-800 flex items-center gap-2">
                             Lắng Nghe Lời Khuyên & Thăng Hạng
-                            <span className="px-1.5 py-0.5 text-[8px] bg-pink-50 text-pink-600 rounded-md font-bold uppercase">Cố vấn AI</span>
+                            <span className="px-1.5 py-0.5 text-[8px] bg-pink-50 text-pink-600 rounded-md font-bold uppercase">Cố vấn</span>
                           </h4>
                           <p className="text-[11px] text-stone-500 leading-relaxed font-normal">
-                            Sau khi em làm xong các đề thi, em sẽ nhận được điểm thưởng <strong className="text-amber-500 font-bold">XuEdu</strong>. Hãy xem biểu đồ thăng tiến tại tab <strong className="text-stone-700">Kết quả học tập</strong> và bấm nút <strong className="text-stone-700">Cố vấn AI</strong> để trợ lý Gemini thông minh đưa ra phân tích và lộ trình học tập cá nhân giúp em tiến bộ nhanh chóng nhé!
+                            Sau khi em làm xong các đề thi, em sẽ nhận được điểm thưởng <strong className="text-amber-500 font-bold">XuEdu</strong>. Hãy xem biểu đồ thăng tiến tại tab <strong className="text-stone-700">Kết quả học tập</strong> và bấm nút <strong className="text-stone-700">Cố vấn học tập</strong> để hệ thống thông minh đưa ra phân tích và lộ trình học tập cá nhân giúp em tiến bộ nhanh chóng nhé!
                           </p>
                         </div>
                       </div>
@@ -3479,24 +3490,36 @@ Trong thời đại công nghệ số, việc tự học và ôn luyện kiến 
               exit={{ scale: 0.9, y: 20 }}
               className="bg-white w-full max-w-2xl rounded-[32px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] border border-stone-100"
             >
-              <div className="p-6 md:p-8 border-b border-stone-100 flex items-center justify-between bg-gradient-to-r from-stone-900 to-stone-800 text-white">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 bg-white/10 backdrop-blur-md rounded-xl flex items-center justify-center text-white border border-white/20">
-                    <BrainCircuit className="w-6 h-6 animate-pulse" />
+              <div className="p-6 md:p-8 border-b border-purple-200/50 flex items-center justify-between bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white relative overflow-hidden">
+                <div className="absolute right-20 -bottom-4 opacity-20 pointer-events-none text-amber-200 animate-pulse">
+                  <Star className="w-12 h-12 fill-amber-200" />
+                </div>
+                <div className="absolute left-1/3 top-1 opacity-15 pointer-events-none text-white">
+                  <Heart className="w-8 h-8 fill-pink-300" />
+                </div>
+                <div className="flex items-center gap-4 relative z-10">
+                  <div className="w-12 h-12 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center text-white border border-white/30 shadow-lg shadow-purple-500/20 shrink-0">
+                    <Bot className="w-7 h-7 text-white animate-bounce" />
                   </div>
                   <div>
-                    <h3 className="text-xl font-bold">Cố vấn học tập AI</h3>
-                    <p className="text-[10px] text-stone-300 font-bold uppercase tracking-widest">Phân tích lộ trình cá nhân</p>
+                    <h3 className="text-xl font-bold flex items-center gap-2">
+                      <span>Cố vấn học tập</span>
+                      <Sparkles className="w-5 h-5 text-amber-300" />
+                    </h3>
+                    <p className="text-[10px] text-purple-100 font-bold uppercase tracking-widest flex items-center gap-1.5">
+                      <Wand2 className="w-3 h-3 text-pink-200" />
+                      Phân tích lộ trình cá nhân
+                    </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 relative z-10">
                   <button
                     onClick={() => toggleSpeakAnalysis(analysisResult)}
                     title={isPlayingSpeech ? "Dừng đọc" : "Phát âm thanh nội dung"}
-                    className={`p-2 px-3.5 rounded-xl transition-all flex items-center gap-1.5 font-bold text-xs ${
+                    className={`p-2 px-3.5 rounded-2xl transition-all flex items-center gap-1.5 font-bold text-xs ${
                       isPlayingSpeech
                         ? 'bg-red-500 text-white animate-pulse shadow-md shadow-red-500/20'
-                        : 'bg-white/10 text-white hover:bg-white/20 border border-white/10'
+                        : 'bg-white/20 text-white hover:bg-white/30 border border-white/30 backdrop-blur-sm'
                     }`}
                   >
                     {isPlayingSpeech ? (
@@ -3513,27 +3536,32 @@ Trong thời đại công nghệ số, việc tự học và ôn luyện kiến 
                   </button>
                   <button 
                     onClick={() => setAnalysisResult(null)}
-                    className="p-2 hover:bg-white/10 rounded-lg transition-all text-stone-300"
+                    className="p-2.5 hover:bg-white/20 rounded-2xl transition-all text-white/90 hover:text-white backdrop-blur-sm"
                   >
                     <X className="w-5 h-5" />
                   </button>
                 </div>
               </div>
 
-              <div className="p-6 md:p-8 overflow-y-auto custom-scrollbar flex-1 bg-stone-50/30">
+              <div className="p-5 md:p-8 overflow-y-auto custom-scrollbar flex-1 bg-gradient-to-b from-indigo-50/60 via-purple-50/30 to-pink-50/20">
                 <div className="prose prose-stone max-w-none">
-                  <div className="markdown-body p-6 bg-white rounded-2xl border border-stone-100 shadow-sm leading-relaxed">
+                  <div className="markdown-body p-6 sm:p-8 bg-white/95 backdrop-blur-sm rounded-3xl border border-purple-100/80 shadow-lg shadow-purple-500/5 leading-relaxed">
                     <Markdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{formatMathSymbols(analysisResult || '')}</Markdown>
                   </div>
                 </div>
               </div>
 
-              <div className="p-6 md:p-8 border-t border-stone-100 bg-white flex justify-end">
+              <div className="p-5 md:p-6 border-t border-purple-100/60 bg-white flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="hidden sm:flex items-center gap-2 text-xs font-bold text-purple-700 bg-purple-50 px-3.5 py-2 rounded-2xl border border-purple-100">
+                  <Sparkles className="w-4 h-4 text-amber-400" />
+                  <span>Đồng hành phân tích thông minh</span>
+                </div>
                 <button 
                   onClick={() => setAnalysisResult(null)}
-                  className="px-8 py-3 bg-stone-900 text-white font-bold text-xs rounded-xl hover:bg-stone-800 transition-all shadow-md"
+                  className="w-full sm:w-auto px-8 py-3.5 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-700 hover:to-pink-700 text-white font-extrabold text-xs rounded-2xl transition-all shadow-lg shadow-purple-500/20 active:scale-95 flex items-center justify-center gap-2"
                 >
-                  Đóng cửa sổ
+                  <X className="w-4 h-4" />
+                  <span>Đóng cửa sổ</span>
                 </button>
               </div>
             </motion.div>

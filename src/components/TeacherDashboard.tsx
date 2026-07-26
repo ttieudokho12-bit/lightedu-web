@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, Users, Send, BookOpen, Trash2, CheckCircle, CheckCircle2, Loader2, Sparkles, FileText, BarChart3, ChevronRight, User, Clock, Award, BrainCircuit, X, Library, Upload, FileUp, Download, CheckSquare, Square, Eye, Copy, HelpCircle, Home, Volume2, Mic, Play, Languages, Camera, Folder, Target, Pencil } from 'lucide-react';
-import { db, auth, serverTimestamp, handleFirestoreError, OperationType } from '../firebase';
+import { Plus, Users, Send, BookOpen, Trash2, CheckCircle, CheckCircle2, Loader2, Sparkles, FileText, BarChart3, ChevronRight, User, Clock, Award, BrainCircuit, X, Library, Upload, FileUp, Download, CheckSquare, Square, Eye, Copy, HelpCircle, Home, Volume2, Mic, Play, Languages, Camera, Folder, Target, Pencil, Key, Search, Bot } from 'lucide-react';
+import { db, auth, serverTimestamp, handleFirestoreError, OperationType, parseDate } from '../firebase';
 import { collection, addDoc, query, where, onSnapshot, deleteDoc, doc, getDocs, orderBy, writeBatch } from 'firebase/firestore';
 import { ClassRoom, Subject, SUBJECTS, Question, Assignment, QuizResult, UserProfile, QuizTemplate, PREDEFINED_TOPICS } from '../types';
 import { generateQuestions, generateQuestionsFromContent, analyzeStudentPerformance, generateQuestionsFromFiles } from '../services/gemini';
@@ -52,7 +52,28 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
   const [activeTab, setActiveTab] = useState<TeacherTab>('CLASSES');
   const [classes, setClasses] = useState<ClassRoom[]>([]);
   const [allStudents, setAllStudents] = useState<UserProfile[]>([]);
+
+  // Filter classes assigned to this teacher
+  const assignedClasses = React.useMemo(() => {
+    const allowedIds = teacherProfile?.allowedClassIds;
+    if (allowedIds && Array.isArray(allowedIds) && allowedIds.length > 0) {
+      return classes.filter(c => allowedIds.includes(c.id) || c.teacherId === currentTeacherUid);
+    }
+    if (allowedIds && Array.isArray(allowedIds) && allowedIds.length === 0) {
+      return [];
+    }
+    const myClasses = classes.filter(c => c.teacherId === currentTeacherUid);
+    if (myClasses.length > 0) {
+      return myClasses;
+    }
+    return classes;
+  }, [classes, teacherProfile?.allowedClassIds, currentTeacherUid]);
+
+  const assignedClassIds = React.useMemo(() => {
+    return assignedClasses.map(c => c.id);
+  }, [assignedClasses]);
   const [selectedClassForStudents, setSelectedClassForStudents] = useState<string | null>(null);
+  const [studentSearchTerm, setStudentSearchTerm] = useState<string>('');
   
   // AI Analysis State
   const [analyzingStudent, setAnalyzingStudent] = useState<string | null>(null);
@@ -255,7 +276,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
 
     const unsubscribeAssignments = onSnapshot(qAssignments, (snapshot) => {
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Assignment));
-      list.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+      list.sort((a, b) => parseDate(b.createdAt).getTime() - parseDate(a.createdAt).getTime());
       setAssignments(list);
       checkLoading();
     }, (error) => {
@@ -266,7 +287,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
     const qResults = query(collection(db, 'results'));
     const unsubscribeResults = onSnapshot(qResults, (snapshot) => {
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as QuizResult));
-      list.sort((a, b) => (b.timestamp?.toMillis?.() || 0) - (a.timestamp?.toMillis?.() || 0));
+      list.sort((a, b) => parseDate(b.timestamp).getTime() - parseDate(a.timestamp).getTime());
       setResults(list);
       checkLoading();
     }, (error) => {
@@ -290,7 +311,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
 
     const unsubscribeTemplates = onSnapshot(qTemplates, (snapshot) => {
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as QuizTemplate));
-      list.sort((a, b) => (b.createdAt?.toMillis?.() || 0) - (a.createdAt?.toMillis?.() || 0));
+      list.sort((a, b) => parseDate(b.createdAt).getTime() - parseDate(a.createdAt).getTime());
       setQuizTemplates(list);
       checkLoading();
     }, (error) => {
@@ -543,7 +564,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
       const analysis = await analyzeStudentPerformance(student.displayName || student.email, studentResults);
       setAnalysisResult(analysis);
     } catch (error) {
-      alert('Lỗi khi phân tích dữ liệu AI.');
+      alert('Lỗi khi phân tích dữ liệu.');
     } finally {
       setIsAnalyzing(false);
     }
@@ -627,9 +648,73 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
     XLSX.writeFile(workbook, `Phan_tich_hoc_sinh_${new Date().toLocaleDateString('vi-VN')}.xlsx`);
   };
 
-  const filteredResults = selectedAssignment 
-    ? results.filter(r => r.assignmentId === selectedAssignment)
-    : results;
+  const handleExportStudentAccountsForTeacher = () => {
+    const filtered = allStudents.filter(s => {
+      const isStudentInAssignedClass = assignedClassIds.length === 0 || (s.classId && assignedClassIds.includes(s.classId));
+      const matchesClass = selectedClassForStudents 
+        ? s.classId === selectedClassForStudents 
+        : isStudentInAssignedClass;
+      const searchLower = studentSearchTerm.toLowerCase().trim();
+      const username = s.email ? s.email.replace('@tuanlo.vn', '') : '';
+      const matchesSearch = !searchLower || (
+        (s.displayName && s.displayName.toLowerCase().includes(searchLower)) ||
+        s.email.toLowerCase().includes(searchLower) ||
+        username.toLowerCase().includes(searchLower)
+      );
+      return matchesClass && matchesSearch;
+    });
+
+    if (filtered.length === 0) {
+      alert('Không tìm thấy học sinh nào để xuất file Excel!');
+      return;
+    }
+
+    const data = filtered.map((student, index) => {
+      const className = classes.find(c => c.id === student.classId)?.name || student.classId || 'Chưa xếp lớp';
+      const username = student.email ? student.email.replace('@tuanlo.vn', '') : '---';
+      const password = (student as any).password || '123456';
+      return {
+        'STT': index + 1,
+        'Họ và tên học sinh': student.displayName || 'Chưa cập nhật',
+        'Lớp': className,
+        'Tên đăng nhập / Mã HS': username,
+        'Email đầy đủ': student.email || '---',
+        'Mật khẩu': password,
+        'Trường học': student.schoolName || '---',
+        'Xã/Phường': student.communeName || '---',
+        'Tỉnh/Thành phố': student.provinceName || '---'
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(data);
+    worksheet['!cols'] = [
+      { wch: 6 },  // STT
+      { wch: 25 }, // Họ và tên
+      { wch: 15 }, // Lớp
+      { wch: 25 }, // Tên đăng nhập
+      { wch: 32 }, // Email
+      { wch: 15 }, // Mật khẩu
+      { wch: 25 }, // Trường
+      { wch: 20 }, // Xã
+      { wch: 20 }  // Tỉnh
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Tai_Khoan_Hoc_Sinh");
+
+    const classNameStr = selectedClassForStudents 
+      ? classes.find(c => c.id === selectedClassForStudents)?.name || selectedClassForStudents 
+      : 'Tat_Ca_Cac_Lop';
+
+    XLSX.writeFile(workbook, `Tai_Khoan_Hoc_Sinh_Lop_${classNameStr.replace(/\s+/g, '_')}.xlsx`);
+  };
+
+  const filteredResults = results.filter(r => {
+    const matchesAssignment = !selectedAssignment || r.assignmentId === selectedAssignment;
+    const student = allStudents.find(s => s.uid === r.uid);
+    const matchesAssignedClasses = assignedClassIds.length === 0 || (student?.classId && assignedClassIds.includes(student.classId)) || (r.classId && assignedClassIds.includes(r.classId));
+    return matchesAssignment && matchesAssignedClasses;
+  });
 
   if (loading) {
     return (
@@ -678,7 +763,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
             }`}
           >
             <Sparkles className="w-4 h-4" />
-            Tạo đề thi AI
+            Tạo đề thi tự động
           </button>
           <button 
             onClick={() => setActiveTab('LIBRARY')}
@@ -716,6 +801,47 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
         </div>
       </div>
 
+      {/* Teaching Assignment Banner */}
+      <div className="bg-gradient-to-r from-emerald-950 via-stone-900 to-indigo-950 text-white p-5 rounded-3xl shadow-xl border border-emerald-900/40 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="p-3 bg-emerald-500/20 rounded-2xl border border-emerald-500/30 text-emerald-400">
+            <BookOpen className="w-6 h-6" />
+          </div>
+          <div>
+            <h2 className="text-base md:text-lg font-bold text-white flex items-center gap-2">
+              Phân công giảng dạy
+              <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                Giáo viên
+              </span>
+            </h2>
+            <p className="text-xs text-stone-300 mt-0.5">
+              Tài khoản: <strong className="text-emerald-300">{teacherProfile?.displayName || 'Giáo viên'}</strong>
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2.5 text-xs">
+          <div className="bg-white/10 backdrop-blur-md px-3 py-2 rounded-2xl border border-white/10 flex items-center gap-2">
+            <Users className="w-4 h-4 text-emerald-400" />
+            <span className="text-stone-300 font-medium">Lớp được phân công:</span>
+            <span className="font-bold text-white">
+              {teacherProfile?.allowedClassIds && teacherProfile.allowedClassIds.length > 0
+                ? (assignedClasses.length > 0 ? assignedClasses.map(c => c.name).join(', ') : 'Chưa được phân công lớp nào')
+                : 'Tất cả các lớp'}
+            </span>
+          </div>
+          <div className="bg-white/10 backdrop-blur-md px-3 py-2 rounded-2xl border border-white/10 flex items-center gap-2">
+            <Languages className="w-4 h-4 text-blue-400" />
+            <span className="text-stone-300 font-medium">Môn được phân công:</span>
+            <span className="font-bold text-white">
+              {teacherProfile?.allowedSubjects && teacherProfile.allowedSubjects.length > 0
+                ? teacherProfile.allowedSubjects.join(', ')
+                : 'Tất cả các môn'}
+            </span>
+          </div>
+        </div>
+      </div>
+
       {activeTab === 'CLASSES' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Classes List */}
@@ -724,18 +850,18 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
               <div className="flex items-center justify-between mb-6">
                 <h3 className="text-lg font-bold text-stone-900 flex items-center gap-2">
                   <Users className="w-5 h-5 text-emerald-600" />
-                  Danh sách lớp học
+                  Danh sách lớp học ({assignedClasses.length})
                 </h3>
               </div>
 
               <div className="space-y-2">
-                {classes.length === 0 ? (
+                {assignedClasses.length === 0 ? (
                   <div className="text-center py-8 border border-dashed border-stone-100 rounded-xl">
-                    <p className="text-xs text-stone-400 italic">Chưa có lớp học nào.</p>
-                    <p className="text-[10px] text-stone-400 mt-1">Vui lòng liên hệ Admin để tạo lớp.</p>
+                    <p className="text-xs text-stone-400 italic">Bạn chưa được phân công lớp học nào.</p>
+                    <p className="text-[10px] text-stone-400 mt-1">Vui lòng liên hệ Admin để được phân công lớp.</p>
                   </div>
                 ) : (
-                  classes.map(cls => (
+                  assignedClasses.map(cls => (
                     <motion.div 
                       whileHover={{ scale: 1.02, x: 5 }}
                       key={cls.id} 
@@ -795,7 +921,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                           <h4 className="font-bold text-stone-900 group-hover:text-indigo-600 transition-colors break-all line-clamp-2" title={as.title}>{as.title}</h4>
                           <p className="text-xs text-stone-500 mt-1 flex items-center gap-2">
                             <Clock className="w-3 h-3" />
-                            {as.questions.length} câu hỏi • {as.createdAt?.toDate?.() ? as.createdAt.toDate().toLocaleDateString('vi-VN') : 'Đang xử lý...'}
+                            {as.questions.length} câu hỏi • {as.createdAt ? parseDate(as.createdAt).toLocaleDateString('vi-VN') : 'Đang xử lý...'}
                           </p>
                         </div>
                       </div>
@@ -859,7 +985,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                   <Sparkles className="w-7 h-7" />
                 </div>
                 <div>
-                  <h3 className="text-2xl sm:text-3xl font-extrabold text-stone-900 tracking-tight">Thiết kế đề thi AI</h3>
+                  <h3 className="text-2xl sm:text-3xl font-extrabold text-stone-900 tracking-tight">Thiết kế đề thi tự động</h3>
                   <p className="text-xs sm:text-sm text-stone-500 mt-1">Tạo đề thi phù hợp với nhu cầu học tập của bạn</p>
                 </div>
               </div>
@@ -1091,7 +1217,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                   </div>
                 ) : (
                   <div className="space-y-2 pt-1">
-                    <label className="text-xs font-bold text-stone-700">Nội dung văn bản (AI sẽ tạo câu hỏi từ đây)</label>
+                    <label className="text-xs font-bold text-stone-700">Nội dung văn bản (Hệ thống sẽ tạo câu hỏi từ đây)</label>
                     <textarea 
                       rows={5}
                       placeholder="Dán nội dung bài học, đoạn văn hoặc kiến thức cần kiểm tra vào đây..."
@@ -1114,7 +1240,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                 <div className="relative flex items-center border-2 border-[#00A66C] rounded-2xl bg-white p-1 transition-all">
                   <input 
                     type="text" 
-                    placeholder="Nhập tên đề thi hoặc để trống để AI tự đặt tên..."
+                    placeholder="Nhập tên đề thi hoặc để trống để hệ thống tự đặt tên..."
                     value={assignmentTitle}
                     onChange={(e) => setAssignmentTitle(e.target.value)}
                     className="w-full px-4 py-3 bg-transparent text-sm font-medium text-stone-800 placeholder-stone-400 outline-none"
@@ -1155,7 +1281,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                 </button>
                 <p className="text-xs text-stone-500 flex items-center justify-center gap-1.5 font-medium">
                   <CheckCircle2 className="w-4 h-4 text-[#00A66C]" />
-                  AI sẽ phân tích tài liệu và tạo đề thi phù hợp nhất cho bạn
+                  Hệ thống sẽ phân tích tài liệu và tạo đề thi phù hợp nhất cho bạn
                 </p>
               </div>
             </div>
@@ -1188,7 +1314,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                     className="w-full p-4 rounded-2xl border border-stone-200 outline-none focus:ring-2 focus:ring-emerald-500 font-bold"
                   >
                     <option value="">-- Chọn lớp học --</option>
-                    {classes.map(cls => <option key={cls.id} value={cls.id}>{cls.name}</option>)}
+                    {assignedClasses.map(cls => <option key={cls.id} value={cls.id}>{cls.name}</option>)}
                   </select>
                 </div>
               </div>
@@ -1280,7 +1406,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                         <div className="min-w-0 flex-1">
                           <span className="text-[10px] font-mono text-amber-600 bg-amber-50 px-2 py-0.5 rounded uppercase tracking-widest font-bold">{template.subject}</span>
                           <h4 className="text-lg font-bold text-stone-900 mt-1 break-all line-clamp-2" title={template.title}>{template.title}</h4>
-                          <p className="text-xs text-stone-500 mt-1">{template.questions.length} câu hỏi • {template.createdAt?.toDate?.() ? template.createdAt.toDate().toLocaleDateString('vi-VN') : 'N/A'}</p>
+                          <p className="text-xs text-stone-500 mt-1">{template.questions.length} câu hỏi • {template.createdAt ? parseDate(template.createdAt).toLocaleDateString('vi-VN') : 'N/A'}</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-1 shrink-0 relative z-10">
@@ -1313,7 +1439,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                         Giao cho lớp:
                       </p>
                       <div className="flex flex-wrap gap-2">
-                        {classes.map(cls => (
+                        {assignedClasses.map(cls => (
                           <button
                             key={cls.id}
                             onClick={() => {
@@ -1351,55 +1477,112 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
       {activeTab === 'STUDENTS' && (
         <div className="space-y-8">
           <div className="bg-white p-8 rounded-3xl border border-stone-200 shadow-sm">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
-              <div className="flex items-center gap-4">
-                <h3 className="text-2xl font-bold text-stone-900 flex items-center gap-3">
-                  <Users className="w-8 h-8 text-emerald-600" />
-                  Danh sách học sinh
-                </h3>
-                {allStudents.length > 0 && (
-                  <button 
-                    onClick={() => {
-                      const filtered = allStudents.filter(s => !selectedClassForStudents || s.classId === selectedClassForStudents);
-                      if (selectedStudents.length === filtered.length) {
-                        setSelectedStudents([]);
-                      } else {
-                        setSelectedStudents(filtered.map(s => s.uid));
-                      }
-                    }}
-                    className="flex items-center gap-2 text-xs font-bold text-stone-500 hover:text-stone-900 transition-colors"
+            <div className="flex flex-col gap-6 mb-8">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <h3 className="text-2xl font-bold text-stone-900 flex items-center gap-3">
+                    <Users className="w-8 h-8 text-emerald-600" />
+                    Danh sách học sinh
+                  </h3>
+                  {allStudents.length > 0 && (
+                    <button 
+                      onClick={() => {
+                        const filtered = allStudents.filter(s => {
+                          const isStudentInAssignedClass = assignedClassIds.length === 0 || (s.classId && assignedClassIds.includes(s.classId));
+                          const matchesClass = selectedClassForStudents 
+                            ? s.classId === selectedClassForStudents 
+                            : isStudentInAssignedClass;
+                          const searchLower = studentSearchTerm.toLowerCase().trim();
+                          const username = s.email ? s.email.replace('@tuanlo.vn', '') : '';
+                          const matchesSearch = !searchLower || (
+                            (s.displayName && s.displayName.toLowerCase().includes(searchLower)) ||
+                            s.email.toLowerCase().includes(searchLower) ||
+                            username.toLowerCase().includes(searchLower)
+                          );
+                          return matchesClass && matchesSearch;
+                        });
+                        if (selectedStudents.length === filtered.length) {
+                          setSelectedStudents([]);
+                        } else {
+                          setSelectedStudents(filtered.map(s => s.uid));
+                        }
+                      }}
+                      className="flex items-center gap-2 text-xs font-bold text-stone-500 hover:text-stone-900 transition-colors"
+                    >
+                      {selectedStudents.length === allStudents.filter(s => {
+                        const isStudentInAssignedClass = assignedClassIds.length === 0 || (s.classId && assignedClassIds.includes(s.classId));
+                        return selectedClassForStudents ? s.classId === selectedClassForStudents : isStudentInAssignedClass;
+                      }).length ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                      Chọn tất cả
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <button
+                    onClick={handleExportStudentAccountsForTeacher}
+                    className="px-4 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl transition-all flex items-center gap-2 shadow-md shadow-emerald-100 text-sm"
+                    title="Xuất danh sách tài khoản và mật khẩu học sinh ra Excel"
                   >
-                    {selectedStudents.length === allStudents.filter(s => !selectedClassForStudents || s.classId === selectedClassForStudents).length ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
-                    Chọn tất cả
+                    <Download className="w-4 h-4" />
+                    <span>Xuất Excel tài khoản</span>
                   </button>
-                )}
+                  <button 
+                    onClick={handleBatchAnalyze}
+                    disabled={selectedStudents.length === 0 || isBatchAnalyzing}
+                    className="px-6 py-3 bg-rose-600 text-white font-bold rounded-xl hover:bg-rose-700 disabled:bg-stone-100 disabled:text-stone-400 transition-all flex items-center gap-2 shadow-lg shadow-rose-100 text-sm"
+                  >
+                    {isBatchAnalyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <BrainCircuit className="w-4 h-4" />}
+                    Phân tích ({selectedStudents.length})
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center gap-4">
-                <select 
-                  value={selectedClassForStudents || ''}
-                  onChange={(e) => {
-                    setSelectedClassForStudents(e.target.value || null);
-                    setSelectedStudents([]);
-                  }}
-                  className="p-3 rounded-xl border border-stone-200 outline-none focus:ring-2 focus:ring-emerald-500 min-w-[200px] font-bold text-sm"
-                >
-                  <option value="">Tất cả các lớp</option>
-                  {classes.map(cls => <option key={cls.id} value={cls.id}>{cls.name}</option>)}
-                </select>
-                <button 
-                  onClick={handleBatchAnalyze}
-                  disabled={selectedStudents.length === 0 || isBatchAnalyzing}
-                  className="px-6 py-3 bg-rose-600 text-white font-bold rounded-xl hover:bg-rose-700 disabled:bg-stone-100 disabled:text-stone-400 transition-all flex items-center gap-2 shadow-lg shadow-rose-100"
-                >
-                  {isBatchAnalyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <BrainCircuit className="w-4 h-4" />}
-                  Phân tích ({selectedStudents.length})
-                </button>
+
+              {/* Class & Search Filter Bar */}
+              <div className="flex flex-wrap items-center gap-4 pt-4 border-t border-stone-100">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-stone-500">Lớp:</span>
+                  <select 
+                    value={selectedClassForStudents || ''}
+                    onChange={(e) => {
+                      setSelectedClassForStudents(e.target.value || null);
+                      setSelectedStudents([]);
+                    }}
+                    className="p-2.5 rounded-xl border border-stone-200 outline-none focus:ring-2 focus:ring-emerald-500 min-w-[180px] font-bold text-sm bg-white"
+                  >
+                    <option value="">-- Tất cả các lớp --</option>
+                    {assignedClasses.map(cls => <option key={cls.id} value={cls.id}>{cls.name}</option>)}
+                  </select>
+                </div>
+
+                <div className="relative flex-1 min-w-[200px]">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-400" />
+                  <input
+                    type="text"
+                    placeholder="Tìm theo tên học sinh, tài khoản..."
+                    value={studentSearchTerm}
+                    onChange={(e) => setStudentSearchTerm(e.target.value)}
+                    className="pl-9 pr-4 py-2.5 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500 w-full bg-white"
+                  />
+                </div>
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {allStudents
-                .filter(s => !selectedClassForStudents || s.classId === selectedClassForStudents)
+                .filter(s => {
+                  const isStudentInAssignedClass = assignedClassIds.length === 0 || (s.classId && assignedClassIds.includes(s.classId));
+                  const matchesClass = selectedClassForStudents 
+                    ? s.classId === selectedClassForStudents 
+                    : isStudentInAssignedClass;
+                  const searchLower = studentSearchTerm.toLowerCase().trim();
+                  const username = s.email ? s.email.replace('@tuanlo.vn', '') : '';
+                  const matchesSearch = !searchLower || (
+                    (s.displayName && s.displayName.toLowerCase().includes(searchLower)) ||
+                    s.email.toLowerCase().includes(searchLower) ||
+                    username.toLowerCase().includes(searchLower)
+                  );
+                  return matchesClass && matchesSearch;
+                })
                 .map(student => {
                   const studentResults = results.filter(r => r.uid === student.uid);
                   const avgScore = studentResults.length > 0 
@@ -1420,7 +1603,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                       <div className="absolute top-4 right-4">
                         {isSelected ? <CheckSquare className="w-5 h-5 text-rose-600" /> : <Square className="w-5 h-5 text-stone-300 group-hover:text-rose-300" />}
                       </div>
-                      <div className="flex items-center gap-4 mb-4">
+                      <div className="flex items-center gap-4 mb-3">
                         <div className={`w-12 h-12 rounded-full flex items-center justify-center transition-colors ${isSelected ? 'bg-rose-600 text-white' : 'bg-white text-stone-400 border border-stone-100 group-hover:text-rose-500'}`}>
                           <User className="w-6 h-6" />
                         </div>
@@ -1429,6 +1612,21 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                           <p className="text-[10px] font-mono text-stone-400 uppercase tracking-widest">
                             {classes.find(c => c.id === student.classId)?.name || 'Chưa xếp lớp'}
                           </p>
+                        </div>
+                      </div>
+
+                      {/* Account Credentials Badge */}
+                      <div className="bg-stone-100/80 p-2.5 rounded-xl text-xs font-mono text-stone-600 space-y-1 mb-4 border border-stone-200/50">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-stone-400 font-sans font-medium">Tên đăng nhập:</span>
+                          <span className="font-bold text-stone-800">{student.email ? student.email.replace('@tuanlo.vn', '') : '---'}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-stone-400 font-sans font-medium">Mật khẩu:</span>
+                          <span className="font-bold text-emerald-700 font-sans bg-emerald-50 px-1.5 py-0.5 rounded flex items-center gap-1">
+                            <Key className="w-3 h-3 text-emerald-600 inline" />
+                            {(student as any).password || '123456'}
+                          </span>
                         </div>
                       </div>
                       <div className="grid grid-cols-2 gap-4 pt-4 border-t border-stone-200 mb-4">
@@ -1450,7 +1648,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                         className="w-full py-2 bg-stone-900 text-white text-xs font-bold rounded-xl hover:bg-stone-800 disabled:bg-stone-100 disabled:text-stone-400 transition-all flex items-center justify-center gap-2 shadow-md"
                       >
                         <BrainCircuit className="w-4 h-4" />
-                        Phân tích AI
+                        Phân tích chi tiết
                       </button>
                     </div>
                   );
@@ -1594,9 +1792,9 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                           <div className="flex flex-col items-center justify-center gap-1 text-xs text-stone-400">
                             <div className="flex items-center gap-1">
                               <Clock className="w-3 h-3" />
-                              {res.timestamp?.toDate?.() ? res.timestamp.toDate().toLocaleDateString('vi-VN') : 'N/A'}
+                              {res.timestamp ? parseDate(res.timestamp).toLocaleDateString('vi-VN') : 'N/A'}
                             </div>
-                            <span className="text-[10px] font-mono opacity-60">{res.timestamp?.toDate?.() ? res.timestamp.toDate().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                            <span className="text-[10px] font-mono opacity-60">{res.timestamp ? parseDate(res.timestamp).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''}</span>
                           </div>
                         </td>
                       </motion.tr>
@@ -1638,15 +1836,18 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
               exit={{ scale: 0.9, y: 20 }}
               className="bg-white w-full max-w-2xl rounded-[40px] shadow-2xl overflow-hidden flex flex-col max-h-[90vh] border border-stone-100"
             >
-              <div className="p-8 border-b border-stone-100 flex items-center justify-between bg-gradient-to-r from-stone-900 to-stone-800 text-white">
-                <div className="flex items-center gap-4">
-                  <div className="w-14 h-14 bg-white/10 backdrop-blur-md rounded-2xl flex items-center justify-center text-white border border-white/20 shadow-inner">
-                    <BrainCircuit className="w-8 h-8 animate-pulse" />
+              <div className="p-6 md:p-8 border-b border-purple-200/50 flex items-center justify-between bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 text-white relative overflow-hidden">
+                <div className="flex items-center gap-4 relative z-10">
+                  <div className="w-14 h-14 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center text-white border border-white/30 shadow-lg shadow-purple-500/20 shrink-0">
+                    <Bot className="w-8 h-8 text-white animate-bounce" />
                   </div>
                   <div>
-                    <h3 className="text-2xl font-bold">Phân tích AI</h3>
-                    <p className="text-xs text-stone-300 font-bold uppercase tracking-widest flex items-center gap-2">
-                      <User className="w-3 h-3" />
+                    <h3 className="text-2xl font-bold flex items-center gap-2">
+                      <span>Phân tích học tập</span>
+                      <Sparkles className="w-5 h-5 text-amber-300" />
+                    </h3>
+                    <p className="text-xs text-purple-100 font-bold uppercase tracking-widest flex items-center gap-2 mt-0.5">
+                      <User className="w-3.5 h-3.5 text-pink-200" />
                       Học sinh: {analyzingStudent}
                     </p>
                   </div>
@@ -1656,43 +1857,44 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                     setAnalysisResult(null);
                     setAnalyzingStudent(null);
                   }}
-                  className="p-3 hover:bg-white/10 rounded-2xl transition-all hover:rotate-90"
+                  className="p-3 hover:bg-white/20 rounded-2xl transition-all text-white/90 hover:text-white backdrop-blur-sm"
                 >
-                  <X className="w-6 h-6 text-white" />
+                  <X className="w-6 h-6" />
                 </button>
               </div>
 
-              <div className="p-8 overflow-y-auto custom-scrollbar flex-1 bg-stone-50/30">
+              <div className="p-6 md:p-8 overflow-y-auto custom-scrollbar flex-1 bg-gradient-to-b from-indigo-50/50 via-purple-50/20 to-pink-50/20">
                 {isAnalyzing ? (
                   <div className="py-20 text-center space-y-6">
                     <div className="relative w-20 h-20 mx-auto">
-                      <div className="absolute inset-0 border-4 border-stone-100 rounded-full"></div>
-                      <div className="absolute inset-0 border-4 border-indigo-600 rounded-full border-t-transparent animate-spin"></div>
-                      <BrainCircuit className="absolute inset-0 m-auto w-8 h-8 text-indigo-600 animate-pulse" />
+                      <div className="absolute inset-0 border-4 border-purple-100 rounded-full"></div>
+                      <div className="absolute inset-0 border-4 border-purple-600 rounded-full border-t-transparent animate-spin"></div>
+                      <Bot className="absolute inset-0 m-auto w-8 h-8 text-purple-600 animate-bounce" />
                     </div>
                     <div className="space-y-2">
                       <p className="text-stone-900 font-bold text-lg">Đang xử lý dữ liệu...</p>
-                      <p className="text-stone-400 text-xs font-bold uppercase tracking-widest animate-pulse">AI đang phân tích kết quả học tập</p>
+                      <p className="text-purple-600 text-xs font-bold uppercase tracking-widest animate-pulse">Hệ thống đang phân tích kết quả học tập</p>
                     </div>
                   </div>
                 ) : (
                   <div className="prose prose-stone max-w-none">
-                    <div className="markdown-body p-6 bg-white rounded-3xl border border-stone-100 shadow-sm leading-relaxed">
+                    <div className="markdown-body p-6 md:p-8 bg-white/95 backdrop-blur-sm rounded-3xl border border-purple-100 shadow-lg shadow-purple-500/5 leading-relaxed">
                       <Markdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{formatMathSymbols(analysisResult || '')}</Markdown>
                     </div>
                   </div>
                 )}
               </div>
 
-              <div className="p-8 border-t border-stone-100 bg-white flex justify-end gap-3">
+              <div className="p-6 md:p-8 border-t border-purple-100/60 bg-white flex justify-end gap-3">
                 <button 
                   onClick={() => {
                     setAnalysisResult(null);
                     setAnalyzingStudent(null);
                   }}
-                  className="px-10 py-4 bg-stone-900 text-white font-bold rounded-2xl hover:bg-stone-800 transition-all shadow-lg hover:shadow-stone-200 active:scale-95"
+                  className="px-10 py-4 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-700 hover:to-pink-700 text-white font-extrabold text-xs rounded-2xl transition-all shadow-lg shadow-purple-500/25 active:scale-95 flex items-center gap-2"
                 >
-                  Đóng cửa sổ
+                  <X className="w-4 h-4" />
+                  <span>Đóng cửa sổ</span>
                 </button>
               </div>
             </motion.div>
@@ -1841,7 +2043,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                 <div className="space-y-3">
                   <label className="text-xs font-bold text-stone-400 uppercase tracking-widest ml-2">Chọn lớp học:</label>
                   <div className="grid grid-cols-1 gap-2">
-                    {classes.map(cls => (
+                    {assignedClasses.map(cls => (
                       <button
                         key={cls.id}
                         onClick={() => {

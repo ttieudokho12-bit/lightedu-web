@@ -10,6 +10,23 @@ export const googleProvider = new GoogleAuthProvider();
 
 export { createUserWithEmailAndPassword, signInWithEmailAndPassword, serverTimestamp };
 
+export function parseDate(ts: any): Date {
+  if (!ts) return new Date();
+  if (typeof ts.toDate === 'function') return ts.toDate();
+  if (ts instanceof Date) return ts;
+  if (typeof ts === 'number') return new Date(ts);
+  if (typeof ts === 'string') return new Date(ts);
+  if (typeof ts === 'object') {
+    if (typeof ts.seconds === 'number') {
+      return new Date(ts.seconds * 1000 + (ts.nanoseconds ? Math.floor(ts.nanoseconds / 1000000) : 0));
+    }
+    if (typeof ts._seconds === 'number') {
+      return new Date(ts._seconds * 1000 + (ts._nanoseconds ? Math.floor(ts._nanoseconds / 1000000) : 0));
+    }
+  }
+  return new Date();
+}
+
 export function cleanFirestoreData<T extends Record<string, any>>(data: T): Record<string, any> {
   const cleaned: Record<string, any> = {};
   for (const key of Object.keys(data)) {

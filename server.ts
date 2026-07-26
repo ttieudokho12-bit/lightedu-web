@@ -1148,7 +1148,7 @@ async function startServer() {
       try {
         await admin.auth().deleteUser(uid);
       } catch (authErr: any) {
-        console.warn(`Auth user ${uid} not found or already deleted:`, authErr.message);
+        console.log(`Auth user ${uid} skipped from Auth deletion: ${authErr?.code || 'user-not-found'}`);
       }
 
       // 2. Delete Firestore User Document
@@ -1156,7 +1156,7 @@ async function startServer() {
 
       res.json({ success: true });
     } catch (error: any) {
-      console.error(`Error deleting user ${uid}:`, error);
+      console.error(`Error deleting user document ${uid}:`, error?.message || error);
       res.status(500).json({ error: error.message || 'Lỗi khi xóa người dùng' });
     }
   });
@@ -1174,13 +1174,13 @@ async function startServer() {
         try {
           await admin.auth().deleteUser(uid);
         } catch (authErr: any) {
-          console.warn(`Auth user ${uid} not found or already deleted:`, authErr.message);
+          console.log(`Auth user ${uid} skipped from Auth deletion: ${authErr?.code || 'user-not-found'}`);
         }
         await db.collection('users').doc(uid).delete();
         results.push({ uid, status: 'success' });
       } catch (error: any) {
-        console.error(`Error deleting user ${uid}:`, error);
-        results.push({ uid, status: 'error', message: error.message });
+        console.error(`Error deleting user document ${uid}:`, error?.message || error);
+        results.push({ uid, status: 'error', message: error?.message || 'Lỗi khi xóa người dùng' });
       }
     }
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { UserPlus, Users, Trash2, Shield, GraduationCap, UserCheck, Mail, Lock, User as UserIcon, Loader2, Search, FileText, CheckCircle2, AlertCircle, Download, School, Pencil, X, BookOpenCheck } from 'lucide-react';
+import { UserPlus, Users, Trash2, Shield, GraduationCap, UserCheck, Mail, Lock, User as UserIcon, Loader2, Search, FileText, CheckCircle2, AlertCircle, Download, School, Pencil, X, BookOpenCheck, Key } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { db, auth, handleFirestoreError, OperationType, cleanFirestoreData } from '../firebase';
 import { collection, query, onSnapshot, doc, setDoc, deleteDoc, getDocs, where } from 'firebase/firestore';
 import { UserProfile, ClassRoom, Subject, SUBJECTS } from '../types';
@@ -25,6 +26,8 @@ export default function AdminDashboard() {
   const [classes, setClasses] = useState<ClassRoom[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedRoleFilter, setSelectedRoleFilter] = useState<'all' | 'student' | 'teacher'>('all');
+  const [selectedClassFilter, setSelectedClassFilter] = useState<string>('all');
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
   
   // New Class Form
@@ -50,6 +53,7 @@ export default function AdminDashboard() {
   const [provinceName, setProvinceName] = useState('');
   const [selectedGrades, setSelectedGrades] = useState<string[]>([]);
   const [selectedTeacherSubjects, setSelectedTeacherSubjects] = useState<Subject[]>([]);
+  const [selectedTeacherClassIds, setSelectedTeacherClassIds] = useState<string[]>([]);
 
   // Bulk Create State
   const [bulkNames, setBulkNames] = useState('');
@@ -64,6 +68,7 @@ export default function AdminDashboard() {
   const [bulkProvinceName, setBulkProvinceName] = useState('');
   const [bulkSelectedGrades, setBulkSelectedGrades] = useState<string[]>([]);
   const [bulkSelectedTeacherSubjects, setBulkSelectedTeacherSubjects] = useState<Subject[]>([]);
+  const [bulkSelectedTeacherClassIds, setBulkSelectedTeacherClassIds] = useState<string[]>([]);
 
   // Editing User States
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
@@ -74,6 +79,7 @@ export default function AdminDashboard() {
   const [editProvinceName, setEditProvinceName] = useState('');
   const [editAllowedGrades, setEditAllowedGrades] = useState<string[]>([]);
   const [editAllowedSubjects, setEditAllowedSubjects] = useState<Subject[]>([]);
+  const [editAllowedClassIds, setEditAllowedClassIds] = useState<string[]>([]);
   const [isUpdatingUser, setIsUpdatingUser] = useState(false);
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
@@ -110,7 +116,8 @@ export default function AdminDashboard() {
     studentCommune?: string,
     studentProvince?: string,
     studentAllowedGrades?: string[],
-    teacherAllowedSubjects?: Subject[]
+    teacherAllowedSubjects?: Subject[],
+    teacherAllowedClassIds?: string[]
   ) => {
     const secondaryAuth = getSecondaryAuth();
     
@@ -175,6 +182,7 @@ export default function AdminDashboard() {
         provinceName: userRole === 'student' ? studentProvince : undefined,
         allowedGrades: userRole === 'student' ? finalAllowedGrades : undefined,
         allowedSubjects: userRole === 'teacher' ? (teacherAllowedSubjects && teacherAllowedSubjects.length > 0 ? teacherAllowedSubjects : undefined) : undefined,
+        allowedClassIds: userRole === 'teacher' ? (teacherAllowedClassIds && teacherAllowedClassIds.length > 0 ? teacherAllowedClassIds : undefined) : undefined,
         password: password // Store the password for fallback authentication
       };
 
@@ -225,7 +233,8 @@ export default function AdminDashboard() {
       communeName, 
       provinceName, 
       selectedGrades,
-      selectedTeacherSubjects
+      selectedTeacherSubjects,
+      selectedTeacherClassIds
     );
     
     if (result.status === 'success') {
@@ -235,6 +244,7 @@ export default function AdminDashboard() {
       setProvinceName('');
       setSelectedGrades([]);
       setSelectedTeacherSubjects([]);
+      setSelectedTeacherClassIds([]);
       alert('Tạo tài khoản thành công!');
     } else {
       setError(result.message || 'Lỗi khi tạo tài khoản');
@@ -280,7 +290,8 @@ export default function AdminDashboard() {
         bulkCommuneName, 
         bulkProvinceName, 
         bulkSelectedGrades,
-        bulkSelectedTeacherSubjects
+        bulkSelectedTeacherSubjects,
+        bulkSelectedTeacherClassIds
       );
       results.push(res);
       // Update results live
@@ -293,6 +304,7 @@ export default function AdminDashboard() {
     setBulkProvinceName('');
     setBulkSelectedGrades([]);
     setBulkSelectedTeacherSubjects([]);
+    setBulkSelectedTeacherClassIds([]);
     
     if (results.every(r => r.status === 'success')) {
       alert(`Đã tạo thành công ${results.length} tài khoản!`);
@@ -378,6 +390,7 @@ export default function AdminDashboard() {
     setEditProvinceName(user.provinceName || '');
     setEditAllowedGrades(user.allowedGrades || []);
     setEditAllowedSubjects(user.allowedSubjects || []);
+    setEditAllowedClassIds(user.allowedClassIds || []);
   };
 
   const handleUpdateUser = async (e: React.FormEvent) => {
@@ -393,7 +406,8 @@ export default function AdminDashboard() {
       try {
         const updatedProfile: Partial<UserProfile> = {
           displayName: editDisplayName,
-          allowedSubjects: editAllowedSubjects
+          allowedSubjects: editAllowedSubjects,
+          allowedClassIds: editAllowedClassIds
         };
         await setDoc(doc(db, 'users', editingUser.uid), cleanFirestoreData(updatedProfile), { merge: true });
         alert('Cập nhật thông tin giáo viên thành công!');
@@ -765,10 +779,81 @@ export default function AdminDashboard() {
     });
   };
 
-  const filteredUsers = users.filter(u => 
-    u.email.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    u.displayName?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filteredUsers = users.filter(u => {
+    const matchesRole = selectedRoleFilter === 'all' || u.role === selectedRoleFilter;
+    const matchesClass = selectedClassFilter === 'all' || u.classId === selectedClassFilter;
+    const username = u.email ? u.email.replace('@tuanlo.vn', '') : '';
+    const searchLower = searchTerm.toLowerCase().trim();
+    const matchesSearch = !searchLower || (
+      u.email.toLowerCase().includes(searchLower) || 
+      (u.displayName && u.displayName.toLowerCase().includes(searchLower)) ||
+      username.toLowerCase().includes(searchLower) ||
+      (u.classId && u.classId.toLowerCase().includes(searchLower))
+    );
+    return matchesRole && matchesClass && matchesSearch;
+  });
+
+  const handleExportStudentAccountsExcel = () => {
+    // Export student accounts matching current class/role/search filter
+    const studentList = users.filter(u => {
+      if (u.role !== 'student') return false;
+      const matchesClass = selectedClassFilter === 'all' || u.classId === selectedClassFilter;
+      const username = u.email ? u.email.replace('@tuanlo.vn', '') : '';
+      const searchLower = searchTerm.toLowerCase().trim();
+      const matchesSearch = !searchLower || (
+        u.email.toLowerCase().includes(searchLower) || 
+        (u.displayName && u.displayName.toLowerCase().includes(searchLower)) ||
+        username.toLowerCase().includes(searchLower)
+      );
+      return matchesClass && matchesSearch;
+    });
+
+    if (studentList.length === 0) {
+      alert('Không tìm thấy tài khoản học sinh nào để xuất file Excel!');
+      return;
+    }
+
+    const data = studentList.map((u, index) => {
+      const className = classes.find(c => c.id === u.classId)?.name || u.classId || 'Chưa xếp lớp';
+      const username = u.email ? u.email.replace('@tuanlo.vn', '') : '---';
+      const password = (u as any).password || '123456';
+      return {
+        'STT': index + 1,
+        'Họ và tên học sinh': u.displayName || 'Chưa cập nhật',
+        'Lớp': className,
+        'Tên đăng nhập / Mã HS': username,
+        'Email đăng nhập': u.email || '---',
+        'Mật khẩu': password,
+        'Trường học': u.schoolName || '---',
+        'Xã/Phường': u.communeName || '---',
+        'Tỉnh/Thành phố': u.provinceName || '---'
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(data);
+
+    worksheet['!cols'] = [
+      { wch: 6 },  // STT
+      { wch: 25 }, // Họ tên
+      { wch: 15 }, // Lớp
+      { wch: 25 }, // Tên đăng nhập
+      { wch: 32 }, // Email
+      { wch: 15 }, // Mật khẩu
+      { wch: 25 }, // Trường
+      { wch: 20 }, // Xã
+      { wch: 20 }  // Tỉnh
+    ];
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Tai_Khoan_Hoc_Sinh");
+
+    const selectedClassName = classes.find(c => c.id === selectedClassFilter)?.name || selectedClassFilter;
+    const fileName = selectedClassFilter !== 'all'
+      ? `Danh_sach_tai_khoan_hoc_sinh_Lop_${selectedClassName.replace(/\s+/g, '_')}.xlsx`
+      : `Danh_sach_tai_khoan_hoc_sinh_${new Date().toLocaleDateString('vi-VN').replace(/\//g, '-')}.xlsx`;
+
+    XLSX.writeFile(workbook, fileName);
+  };
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 md:py-8 space-y-6 md:space-y-8">
@@ -949,45 +1034,96 @@ export default function AdminDashboard() {
               )}
 
               {role === 'teacher' && (
-                <div className="space-y-2 border border-stone-100 p-3.5 rounded-xl bg-stone-50">
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-500 font-bold block">
-                      Phân công môn dạy (Tích chọn)
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (selectedTeacherSubjects.length === SUBJECTS.length) {
-                          setSelectedTeacherSubjects([]);
-                        } else {
-                          setSelectedTeacherSubjects([...SUBJECTS]);
-                        }
-                      }}
-                      className="text-[10px] text-blue-600 font-bold hover:underline"
-                    >
-                      {selectedTeacherSubjects.length === SUBJECTS.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
-                    </button>
+                <div className="space-y-4">
+                  {/* Phân công môn dạy */}
+                  <div className="space-y-2 border border-stone-100 p-3.5 rounded-xl bg-stone-50">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[10px] font-mono uppercase tracking-widest text-stone-500 font-bold block">
+                        Phân công môn dạy (Tích chọn)
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (selectedTeacherSubjects.length === SUBJECTS.length) {
+                            setSelectedTeacherSubjects([]);
+                          } else {
+                            setSelectedTeacherSubjects([...SUBJECTS]);
+                          }
+                        }}
+                        className="text-[10px] text-blue-600 font-bold hover:underline"
+                      >
+                        {selectedTeacherSubjects.length === SUBJECTS.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs max-h-48 overflow-y-auto p-1">
+                      {SUBJECTS.map(subj => (
+                        <label key={subj} className="flex items-center gap-2 cursor-pointer select-none text-stone-700 hover:text-stone-900 bg-white p-2 rounded-lg border border-stone-200 shadow-sm">
+                          <input 
+                            type="checkbox"
+                            checked={selectedTeacherSubjects.includes(subj)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedTeacherSubjects([...selectedTeacherSubjects, subj]);
+                              } else {
+                                setSelectedTeacherSubjects(selectedTeacherSubjects.filter(x => x !== subj));
+                              }
+                            }}
+                            className="rounded border-stone-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="font-medium text-stone-800 text-[11px]">{subj}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <p className="text-[9px] text-stone-400 italic">Nếu không chọn môn nào, giáo viên sẽ mặc định xem được tất cả môn học.</p>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs max-h-48 overflow-y-auto p-1">
-                    {SUBJECTS.map(subj => (
-                      <label key={subj} className="flex items-center gap-2 cursor-pointer select-none text-stone-700 hover:text-stone-900 bg-white p-2 rounded-lg border border-stone-200 shadow-sm">
-                        <input 
-                          type="checkbox"
-                          checked={selectedTeacherSubjects.includes(subj)}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setSelectedTeacherSubjects([...selectedTeacherSubjects, subj]);
+
+                  {/* Phân công lớp dạy */}
+                  <div className="space-y-2 border border-stone-100 p-3.5 rounded-xl bg-stone-50">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[10px] font-mono uppercase tracking-widest text-stone-500 font-bold block">
+                        Phân công lớp dạy ({classes.length} lớp)
+                      </label>
+                      {classes.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (selectedTeacherClassIds.length === classes.length) {
+                              setSelectedTeacherClassIds([]);
                             } else {
-                              setSelectedTeacherSubjects(selectedTeacherSubjects.filter(x => x !== subj));
+                              setSelectedTeacherClassIds(classes.map(c => c.id));
                             }
                           }}
-                          className="rounded border-stone-300 text-blue-600 focus:ring-blue-500"
-                        />
-                        <span className="font-medium text-stone-800 text-[11px]">{subj}</span>
-                      </label>
-                    ))}
+                          className="text-[10px] text-blue-600 font-bold hover:underline"
+                        >
+                          {selectedTeacherClassIds.length === classes.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                        </button>
+                      )}
+                    </div>
+                    {classes.length === 0 ? (
+                      <p className="text-[11px] text-amber-600 italic">Chưa có lớp nào trong danh sách. Hãy tạo lớp học trước.</p>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs max-h-48 overflow-y-auto p-1">
+                        {classes.map(cls => (
+                          <label key={cls.id} className="flex items-center gap-2 cursor-pointer select-none text-stone-700 hover:text-stone-900 bg-white p-2 rounded-lg border border-stone-200 shadow-sm">
+                            <input 
+                              type="checkbox"
+                              checked={selectedTeacherClassIds.includes(cls.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setSelectedTeacherClassIds([...selectedTeacherClassIds, cls.id]);
+                                } else {
+                                  setSelectedTeacherClassIds(selectedTeacherClassIds.filter(x => x !== cls.id));
+                                }
+                              }}
+                              className="rounded border-stone-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <span className="font-medium text-stone-800 text-[11px]">{cls.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-[9px] text-stone-400 italic">Nếu không chọn lớp nào, giáo viên sẽ xem được tất cả các lớp.</p>
                   </div>
-                  <p className="text-[9px] text-stone-400 italic">Nếu không chọn môn nào, giáo viên sẽ mặc định xem được tất cả môn học.</p>
                 </div>
               )}
 
@@ -1128,45 +1264,96 @@ export default function AdminDashboard() {
               )}
 
               {bulkRole === 'teacher' && (
-                <div className="space-y-2 border border-stone-100 p-3.5 rounded-xl bg-stone-50">
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-500 font-bold block">
-                      Phân công môn dạy cho các giáo viên này
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (bulkSelectedTeacherSubjects.length === SUBJECTS.length) {
-                          setBulkSelectedTeacherSubjects([]);
-                        } else {
-                          setBulkSelectedTeacherSubjects([...SUBJECTS]);
-                        }
-                      }}
-                      className="text-[10px] text-blue-600 font-bold hover:underline"
-                    >
-                      {bulkSelectedTeacherSubjects.length === SUBJECTS.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
-                    </button>
+                <div className="space-y-4">
+                  {/* Phân công môn dạy */}
+                  <div className="space-y-2 border border-stone-100 p-3.5 rounded-xl bg-stone-50">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[10px] font-mono uppercase tracking-widest text-stone-500 font-bold block">
+                        Phân công môn dạy cho các giáo viên này
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (bulkSelectedTeacherSubjects.length === SUBJECTS.length) {
+                            setBulkSelectedTeacherSubjects([]);
+                          } else {
+                            setBulkSelectedTeacherSubjects([...SUBJECTS]);
+                          }
+                        }}
+                        className="text-[10px] text-blue-600 font-bold hover:underline"
+                      >
+                        {bulkSelectedTeacherSubjects.length === SUBJECTS.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs max-h-48 overflow-y-auto p-1">
+                      {SUBJECTS.map(subj => (
+                        <label key={subj} className="flex items-center gap-2 cursor-pointer select-none text-stone-700 hover:text-stone-900 bg-white p-2 rounded-lg border border-stone-200 shadow-sm">
+                          <input 
+                            type="checkbox"
+                            checked={bulkSelectedTeacherSubjects.includes(subj)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setBulkSelectedTeacherSubjects([...bulkSelectedTeacherSubjects, subj]);
+                              } else {
+                                setBulkSelectedTeacherSubjects(bulkSelectedTeacherSubjects.filter(x => x !== subj));
+                              }
+                            }}
+                            className="rounded border-stone-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="font-medium text-stone-800 text-[11px]">{subj}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <p className="text-[9px] text-stone-400 italic">Nếu không chọn môn nào, giáo viên sẽ mặc định xem được tất cả môn học.</p>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs max-h-48 overflow-y-auto p-1">
-                    {SUBJECTS.map(subj => (
-                      <label key={subj} className="flex items-center gap-2 cursor-pointer select-none text-stone-700 hover:text-stone-900 bg-white p-2 rounded-lg border border-stone-200 shadow-sm">
-                        <input 
-                          type="checkbox"
-                          checked={bulkSelectedTeacherSubjects.includes(subj)}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setBulkSelectedTeacherSubjects([...bulkSelectedTeacherSubjects, subj]);
+
+                  {/* Phân công lớp dạy */}
+                  <div className="space-y-2 border border-stone-100 p-3.5 rounded-xl bg-stone-50">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[10px] font-mono uppercase tracking-widest text-stone-500 font-bold block">
+                        Phân công lớp dạy cho các giáo viên này ({classes.length} lớp)
+                      </label>
+                      {classes.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (bulkSelectedTeacherClassIds.length === classes.length) {
+                              setBulkSelectedTeacherClassIds([]);
                             } else {
-                              setBulkSelectedTeacherSubjects(bulkSelectedTeacherSubjects.filter(x => x !== subj));
+                              setBulkSelectedTeacherClassIds(classes.map(c => c.id));
                             }
                           }}
-                          className="rounded border-stone-300 text-blue-600 focus:ring-blue-500"
-                        />
-                        <span className="font-medium text-stone-800 text-[11px]">{subj}</span>
-                      </label>
-                    ))}
+                          className="text-[10px] text-blue-600 font-bold hover:underline"
+                        >
+                          {bulkSelectedTeacherClassIds.length === classes.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                        </button>
+                      )}
+                    </div>
+                    {classes.length === 0 ? (
+                      <p className="text-[11px] text-amber-600 italic">Chưa có lớp nào trong danh sách. Hãy tạo lớp học trước.</p>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs max-h-48 overflow-y-auto p-1">
+                        {classes.map(cls => (
+                          <label key={cls.id} className="flex items-center gap-2 cursor-pointer select-none text-stone-700 hover:text-stone-900 bg-white p-2 rounded-lg border border-stone-200 shadow-sm">
+                            <input 
+                              type="checkbox"
+                              checked={bulkSelectedTeacherClassIds.includes(cls.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setBulkSelectedTeacherClassIds([...bulkSelectedTeacherClassIds, cls.id]);
+                                } else {
+                                  setBulkSelectedTeacherClassIds(bulkSelectedTeacherClassIds.filter(x => x !== cls.id));
+                                }
+                              }}
+                              className="rounded border-stone-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <span className="font-medium text-stone-800 text-[11px]">{cls.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-[9px] text-stone-400 italic">Nếu không chọn lớp nào, giáo viên sẽ xem được tất cả các lớp.</p>
                   </div>
-                  <p className="text-[9px] text-stone-400 italic">Nếu không chọn môn nào, giáo viên sẽ mặc định xem được tất cả môn học.</p>
                 </div>
               )}
 
@@ -1314,43 +1501,84 @@ export default function AdminDashboard() {
         {/* User List */}
         <div className="lg:col-span-2 space-y-6">
           <div className="bg-white p-4 md:p-8 rounded-2xl border border-stone-200 shadow-sm">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 md:mb-8">
-              <div className="space-y-1">
-                <h3 className="text-base md:text-lg font-bold text-stone-900 flex items-center gap-2">
-                  <Users className="w-4 h-4 md:w-5 md:h-5 text-blue-600" />
-                  Danh sách tài khoản ({users.length})
-                </h3>
-                {selectedUserIds.length > 0 && (
-                  <p className="text-[10px] font-bold text-blue-600 animate-pulse">
-                    Đã chọn {selectedUserIds.length} tài khoản
-                  </p>
-                )}
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {selectedUserIds.length > 0 && (
+            <div className="flex flex-col gap-4 mb-6 md:mb-8">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <h3 className="text-base md:text-lg font-bold text-stone-900 flex items-center gap-2">
+                    <Users className="w-4 h-4 md:w-5 md:h-5 text-blue-600" />
+                    Danh sách tài khoản ({filteredUsers.length}/{users.length})
+                  </h3>
+                  {selectedUserIds.length > 0 && (
+                    <p className="text-[10px] font-bold text-blue-600 animate-pulse">
+                      Đã chọn {selectedUserIds.length} tài khoản
+                    </p>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
                   <button 
-                    onClick={handleDeleteSelected}
-                    className="flex items-center gap-2 px-3 py-2 bg-red-50 text-red-600 rounded-lg text-[10px] font-bold hover:bg-red-100 transition-all"
+                    onClick={handleExportStudentAccountsExcel}
+                    className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition-all shadow-sm"
+                    title="Xuất danh sách tài khoản và mật khẩu học sinh ra file Excel"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Xuất Excel học sinh</span>
+                  </button>
+                  {selectedUserIds.length > 0 && (
+                    <button 
+                      onClick={handleDeleteSelected}
+                      className="flex items-center gap-2 px-3 py-2 bg-red-50 text-red-600 rounded-lg text-[10px] font-bold hover:bg-red-100 transition-all"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      Xóa đã chọn
+                    </button>
+                  )}
+                  <button 
+                    onClick={handleDeleteAll}
+                    className="flex items-center gap-2 px-3 py-2 bg-stone-900 text-white rounded-lg text-[10px] font-bold hover:bg-stone-800 transition-all"
                   >
                     <Trash2 className="w-3 h-3" />
-                    Xóa đã chọn
+                    Xóa tất cả
                   </button>
-                )}
-                <button 
-                  onClick={handleDeleteAll}
-                  className="flex items-center gap-2 px-3 py-2 bg-stone-900 text-white rounded-lg text-[10px] font-bold hover:bg-stone-800 transition-all"
-                >
-                  <Trash2 className="w-3 h-3" />
-                  Xóa tất cả
-                </button>
-                <div className="relative flex-1 md:flex-none">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-stone-300" />
+                </div>
+              </div>
+
+              {/* Filter Controls Bar */}
+              <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-stone-100">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-stone-600">
+                  <span>Lọc theo lớp:</span>
+                  <select
+                    value={selectedClassFilter}
+                    onChange={(e) => setSelectedClassFilter(e.target.value)}
+                    className="px-3 py-1.5 rounded-lg border border-stone-200 text-xs font-bold bg-white outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="all">-- Tất cả các lớp --</option>
+                    {classes.map(cls => (
+                      <option key={cls.id} value={cls.id}>{cls.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-1.5 text-xs font-bold text-stone-600">
+                  <span>Vai trò:</span>
+                  <select
+                    value={selectedRoleFilter}
+                    onChange={(e) => setSelectedRoleFilter(e.target.value as any)}
+                    className="px-3 py-1.5 rounded-lg border border-stone-200 text-xs font-bold bg-white outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    <option value="all">Tất cả vai trò</option>
+                    <option value="student">Học sinh</option>
+                    <option value="teacher">Giáo viên</option>
+                  </select>
+                </div>
+
+                <div className="relative flex-1 min-w-[180px]">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-stone-400" />
                   <input 
                     type="text" 
-                    placeholder="Tìm kiếm..."
+                    placeholder="Tìm tên, TK, email..."
                     value={searchTerm}
                     onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-10 pr-4 py-2 rounded-lg border border-stone-100 text-xs md:text-sm outline-none focus:ring-2 focus:ring-emerald-500 w-full md:w-48"
+                    className="pl-9 pr-3 py-1.5 rounded-lg border border-stone-200 text-xs outline-none focus:ring-2 focus:ring-emerald-500 w-full bg-white"
                   />
                 </div>
               </div>
@@ -1408,7 +1636,14 @@ export default function AdminDashboard() {
                             </div>
                             <div>
                               <p className="text-xs md:text-sm font-bold text-stone-900">{u.displayName}</p>
-                              <p className="text-[10px] md:text-xs text-stone-400">{u.email.replace('@tuanlo.vn', '')}</p>
+                              <div className="flex flex-wrap items-center gap-1.5 text-[10px] md:text-xs text-stone-500 font-mono mt-0.5">
+                                <span>TK: {u.email.replace('@tuanlo.vn', '')}</span>
+                                <span className="text-stone-300">•</span>
+                                <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded font-sans font-bold flex items-center gap-1" title="Mật khẩu">
+                                  <Key className="w-2.5 h-2.5 text-emerald-600" />
+                                  {(u as any).password || '123456'}
+                                </span>
+                              </div>
                             </div>
                           </div>
                         </td>
@@ -1439,13 +1674,35 @@ export default function AdminDashboard() {
                             {u.role === 'student' && (!u.allowedGrades || u.allowedGrades.length === 0) && (
                               <span className="text-[10px] text-stone-400 italic">Mặc định</span>
                             )}
-                            {u.role === 'teacher' && (u.allowedSubjects || []).map(s => (
-                              <span key={s} className="text-[9px] bg-blue-50 text-blue-700 border border-blue-100 px-1.5 py-0.5 rounded font-bold">
-                                {s}
-                              </span>
-                            ))}
-                            {u.role === 'teacher' && (!u.allowedSubjects || u.allowedSubjects.length === 0) && (
-                              <span className="text-[10px] text-stone-400 italic">Tất cả môn</span>
+                            {u.role === 'teacher' && (
+                              <div className="space-y-1.5">
+                                <div className="flex flex-wrap gap-1 max-w-[200px]">
+                                  {u.allowedSubjects && u.allowedSubjects.length > 0 ? (
+                                    u.allowedSubjects.map(s => (
+                                      <span key={s} className="text-[9px] bg-blue-50 text-blue-700 border border-blue-100 px-1.5 py-0.5 rounded font-bold">
+                                        {s}
+                                      </span>
+                                    ))
+                                  ) : (
+                                    <span className="text-[10px] text-stone-400 italic">Tất cả môn</span>
+                                  )}
+                                </div>
+                                <div className="flex flex-wrap items-center gap-1 max-w-[200px]">
+                                  <span className="text-[9px] text-stone-500 font-bold">Lớp:</span>
+                                  {u.allowedClassIds && u.allowedClassIds.length > 0 ? (
+                                    u.allowedClassIds.map(cid => {
+                                      const cName = classes.find(c => c.id === cid)?.name || cid;
+                                      return (
+                                        <span key={cid} className="text-[9px] bg-emerald-50 text-emerald-700 border border-emerald-100 px-1.5 py-0.5 rounded font-bold">
+                                          {cName}
+                                        </span>
+                                      );
+                                    })
+                                  ) : (
+                                    <span className="text-[10px] text-stone-400 italic">Tất cả lớp</span>
+                                  )}
+                                </div>
+                              </div>
                             )}
                             {u.role === 'admin' && <span className="text-stone-300">---</span>}
                           </div>
@@ -1623,6 +1880,7 @@ export default function AdminDashboard() {
                     />
                   </div>
 
+                  {/* Phân công môn dạy */}
                   <div className="space-y-2 border border-stone-100 p-3.5 rounded-xl bg-stone-50">
                     <div className="flex items-center justify-between mb-1">
                       <label className="text-[10px] font-mono uppercase tracking-widest text-stone-500 font-bold block">
@@ -1642,7 +1900,7 @@ export default function AdminDashboard() {
                         {editAllowedSubjects.length === SUBJECTS.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
                       </button>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs max-h-52 overflow-y-auto p-1">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs max-h-44 overflow-y-auto p-1">
                       {SUBJECTS.map(subj => (
                         <label key={subj} className="flex items-center gap-2 cursor-pointer select-none text-stone-700 hover:text-stone-900 bg-white p-2 rounded-lg border border-stone-200 shadow-sm">
                           <input 
@@ -1662,6 +1920,54 @@ export default function AdminDashboard() {
                       ))}
                     </div>
                     <p className="text-[9px] text-stone-400 italic">Nếu không chọn môn nào, giáo viên sẽ mặc định xem được tất cả môn học.</p>
+                  </div>
+
+                  {/* Phân công lớp dạy */}
+                  <div className="space-y-2 border border-stone-100 p-3.5 rounded-xl bg-stone-50">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[10px] font-mono uppercase tracking-widest text-stone-500 font-bold block">
+                        Phân công lớp dạy ({classes.length} lớp)
+                      </label>
+                      {classes.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (editAllowedClassIds.length === classes.length) {
+                              setEditAllowedClassIds([]);
+                            } else {
+                              setEditAllowedClassIds(classes.map(c => c.id));
+                            }
+                          }}
+                          className="text-[10px] text-blue-600 font-bold hover:underline"
+                        >
+                          {editAllowedClassIds.length === classes.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                        </button>
+                      )}
+                    </div>
+                    {classes.length === 0 ? (
+                      <p className="text-[11px] text-amber-600 italic">Chưa có lớp nào trong danh sách. Hãy tạo lớp học trước.</p>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs max-h-44 overflow-y-auto p-1">
+                        {classes.map(cls => (
+                          <label key={cls.id} className="flex items-center gap-2 cursor-pointer select-none text-stone-700 hover:text-stone-900 bg-white p-2 rounded-lg border border-stone-200 shadow-sm">
+                            <input 
+                              type="checkbox"
+                              checked={editAllowedClassIds.includes(cls.id)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setEditAllowedClassIds([...editAllowedClassIds, cls.id]);
+                                } else {
+                                  setEditAllowedClassIds(editAllowedClassIds.filter(x => x !== cls.id));
+                                }
+                              }}
+                              className="rounded border-stone-300 text-blue-600 focus:ring-blue-500"
+                            />
+                            <span className="font-medium text-stone-800 text-[11px]">{cls.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    <p className="text-[9px] text-stone-400 italic">Nếu không chọn lớp nào, giáo viên sẽ xem được tất cả các lớp.</p>
                   </div>
                 </>
               ) : (

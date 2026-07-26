@@ -178,7 +178,7 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject }
       console.error("Report error check failed:", error);
       setReportResult({
         hasError: false,
-        message: "Có lỗi xảy ra khi kết nối hệ thống AI. Bạn vui lòng thử lại sau nhé!"
+        message: "Có lỗi xảy ra khi kết nối hệ thống. Bạn vui lòng thử lại sau nhé!"
       });
     } finally {
       setIsReportingError(false);
@@ -601,7 +601,7 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject }
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center">
         <Loader2 className="w-12 h-12 text-emerald-600 animate-spin mb-4" />
-        <p className="text-stone-600 font-medium italic serif">AI đang soạn bộ câu hỏi cho bạn...</p>
+        <p className="text-stone-600 font-medium italic serif">Hệ thống đang soạn bộ câu hỏi cho bạn...</p>
         <p className="text-stone-400 text-sm mt-2">Vui lòng đợi trong giây lát</p>
       </div>
     );
@@ -1198,7 +1198,7 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject }
                   {isReportingError ? (
                     <>
                       <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-500" />
-                      <span>AI đang kiểm tra...</span>
+                      <span>Đang kiểm tra...</span>
                     </>
                   ) : (
                     <>
@@ -1227,7 +1227,7 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject }
                     )}
                     <div>
                       <p className="font-bold">
-                        {reportResult.hasError ? "Phát hiện có sai sót! AI đã đổi câu hỏi mới:" : "Kết quả kiểm tra:"}
+                        {reportResult.hasError ? "Phát hiện có sai sót! Hệ thống đã đổi câu hỏi mới:" : "Kết quả kiểm tra:"}
                       </p>
                       <p className="mt-1 leading-relaxed opacity-90">{reportResult.message}</p>
                     </div>

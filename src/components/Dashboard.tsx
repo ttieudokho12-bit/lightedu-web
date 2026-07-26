@@ -32,7 +32,7 @@ export default function Dashboard({ onSelectSubject, onViewHistory }: DashboardP
       >
         <h2 className="text-3xl font-bold text-stone-900 mb-4">Chào mừng bạn!</h2>
         <p className="text-stone-600 max-w-lg mx-auto italic serif">
-          Chọn môn học bạn muốn ôn luyện hôm nay. AI sẽ giúp bạn tạo bộ câu hỏi phù hợp nhất.
+          Chọn môn học bạn muốn ôn luyện hôm nay. Hệ thống sẽ giúp bạn tạo bộ câu hỏi phù hợp nhất.
         </p>
       </motion.div>
 

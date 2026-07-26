@@ -84,7 +84,7 @@ export const LazyQuestionImage: React.FC<LazyQuestionImageProps> = ({
     return (
       <div className="mt-2 p-4 border border-stone-100 rounded-xl bg-stone-50 flex items-center gap-3 w-fit max-w-full">
         <Loader2 className="w-5 h-5 text-emerald-500 animate-spin" />
-        <span className="text-xs text-stone-500 font-medium font-sans">AI đang vẽ hình minh họa sinh động...</span>
+        <span className="text-xs text-stone-500 font-medium font-sans">Đang vẽ hình minh họa sinh động...</span>
       </div>
     );
   }
