@@ -5,11 +5,14 @@ import {
   ArrowRight, Home, Loader2, Sparkles, Smile, Star, HelpCircle, Info
 } from 'lucide-react';
 import { VocabularyIllustration } from './VocabularyIllustration';
+import { db, auth, serverTimestamp } from '../firebase';
+import { collection, addDoc, doc, getDoc } from 'firebase/firestore';
 
 interface SpeakingPracticeProps {
   vocabList: { word: string; meaning: string }[];
   onComplete: () => void;
   onHome: () => void;
+  subject?: string;
 }
 
 const getExampleSentence = (word: string) => {
@@ -51,7 +54,8 @@ const getExampleSentence = (word: string) => {
 export const SpeakingPractice: React.FC<SpeakingPracticeProps> = ({
   vocabList,
   onComplete,
-  onHome
+  onHome,
+  subject = 'Tiếng Anh'
 }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const currentItem = vocabList[currentIndex] || { word: "", meaning: "" };
@@ -432,6 +436,32 @@ export const SpeakingPractice: React.FC<SpeakingPracticeProps> = ({
 
     if (score >= 80) {
       playPositiveChime();
+    }
+
+    // Save pronunciation practice score to Firestore
+    if (auth.currentUser?.uid) {
+      const isClear = score >= 75;
+      const isCorrect = score >= 80;
+      const isConfident = score >= 70;
+      
+      const pResult = {
+        uid: auth.currentUser.uid,
+        studentName: auth.currentUser.displayName || 'Học sinh',
+        subject: subject || 'Tiếng Anh',
+        word: currentItem.word,
+        meaning: currentItem.meaning,
+        userSpeech: text,
+        score: score,
+        accuracy: score,
+        fluency: isConfident ? Math.min(100, score + 5) : score,
+        pronunciation: isClear ? Math.min(100, score + 8) : score,
+        completeness: isCorrect ? 100 : Math.max(50, score),
+        timestamp: serverTimestamp()
+      };
+
+      addDoc(collection(db, 'pronunciation_results'), pResult).catch(err => {
+        console.error("Error saving pronunciation result to Firestore:", err);
+      });
     }
   };
 

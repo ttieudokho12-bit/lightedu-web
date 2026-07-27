@@ -62,6 +62,25 @@ export interface QuizResult {
   timestamp: any; // Firestore Timestamp
 }
 
+export interface PronunciationResult {
+  id?: string;
+  uid: string;
+  studentName?: string;
+  className?: string;
+  schoolName?: string;
+  grade?: string;
+  subject: string;
+  word: string;
+  meaning?: string;
+  userSpeech?: string;
+  score: number;
+  accuracy: number;
+  fluency?: number;
+  pronunciation?: number;
+  completeness?: number;
+  timestamp: any;
+}
+
 export interface QuizTemplate {
   id?: string;
   teacherId: string;

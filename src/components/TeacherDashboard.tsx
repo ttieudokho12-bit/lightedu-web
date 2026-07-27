@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, Users, Send, BookOpen, Trash2, CheckCircle, CheckCircle2, Loader2, Sparkles, FileText, BarChart3, ChevronRight, User, Clock, Award, BrainCircuit, X, Library, Upload, FileUp, Download, CheckSquare, Square, Eye, Copy, HelpCircle, Home, Volume2, Mic, Play, Languages, Camera, Folder, Target, Pencil, Key, Search, Bot } from 'lucide-react';
+import { Plus, Users, Send, BookOpen, Trash2, CheckCircle, CheckCircle2, Loader2, Sparkles, FileText, BarChart3, ChevronRight, User, Clock, Award, BrainCircuit, X, Library, Upload, FileUp, Download, CheckSquare, Square, Eye, Copy, HelpCircle, Home, Volume2, Mic, Play, Languages, Camera, Folder, Target, Pencil, Key, Search, Bot, ScanLine, QrCode } from 'lucide-react';
 import { db, auth, serverTimestamp, handleFirestoreError, OperationType, parseDate } from '../firebase';
 import { collection, addDoc, query, where, onSnapshot, deleteDoc, doc, getDocs, orderBy, writeBatch } from 'firebase/firestore';
-import { ClassRoom, Subject, SUBJECTS, Question, Assignment, QuizResult, UserProfile, QuizTemplate, PREDEFINED_TOPICS } from '../types';
+import { ClassRoom, Subject, SUBJECTS, Question, Assignment, QuizResult, PronunciationResult, UserProfile, QuizTemplate, PREDEFINED_TOPICS } from '../types';
 import { generateQuestions, generateQuestionsFromContent, analyzeStudentPerformance, generateQuestionsFromFiles } from '../services/gemini';
 import { LazyQuestionImage } from './LazyQuestionImage';
 import Markdown from 'react-markdown';
@@ -14,8 +14,9 @@ import * as XLSX from 'xlsx';
 import { VocabularyIllustration } from './VocabularyIllustration';
 import { SpeakingPractice } from './SpeakingPractice';
 import Quiz from './Quiz';
+import ScanGrading from './ScanGrading';
 
-type TeacherTab = 'CLASSES' | 'CREATE_QUIZ' | 'LIBRARY' | 'STUDENTS' | 'RESULTS';
+type TeacherTab = 'CLASSES' | 'CREATE_QUIZ' | 'LIBRARY' | 'STUDENTS' | 'RESULTS' | 'SCAN_GRADING';
 
 interface TeacherDashboardProps {
   userProfile?: UserProfile | null;
@@ -122,6 +123,8 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
 
   // Results State
   const [results, setResults] = useState<QuizResult[]>([]);
+  const [pronunciationResults, setPronunciationResults] = useState<PronunciationResult[]>([]);
+  const [resultsSubTab, setResultsSubTab] = useState<'quiz' | 'pronunciation'>('quiz');
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [selectedAssignment, setSelectedAssignment] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -319,12 +322,22 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
       checkLoading();
     });
 
+    const qPronunciation = query(collection(db, 'pronunciation_results'));
+    const unsubscribePronunciation = onSnapshot(qPronunciation, (snapshot) => {
+      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PronunciationResult));
+      list.sort((a, b) => parseDate(b.timestamp).getTime() - parseDate(a.timestamp).getTime());
+      setPronunciationResults(list);
+    }, (error) => {
+      console.error('Error fetching pronunciation results:', error);
+    });
+
     return () => {
       unsubscribeClasses();
       unsubscribeAssignments();
       unsubscribeResults();
       unsubscribeStudents();
       unsubscribeTemplates();
+      unsubscribePronunciation();
     };
   }, [currentTeacherUid]);
 
@@ -797,6 +810,17 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
           >
             <BarChart3 className="w-4 h-4" />
             Kết quả học tập
+          </button>
+          <button 
+            onClick={() => setActiveTab('SCAN_GRADING')}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-xs md:text-sm font-semibold transition-all whitespace-nowrap ${
+              activeTab === 'SCAN_GRADING' 
+                ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20' 
+                : 'text-stone-600 hover:text-stone-900'
+            }`}
+          >
+            <ScanLine className="w-4 h-4" />
+            Quét mã chấm bài
           </button>
         </div>
       </div>
@@ -1722,27 +1746,56 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
       {activeTab === 'RESULTS' && (
         <div className="space-y-8">
           <div className="bg-white p-8 rounded-3xl border border-stone-200 shadow-sm">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
               <h3 className="text-2xl font-bold text-stone-900 flex items-center gap-3">
                 <div className="w-12 h-12 rounded-2xl bg-blue-100 flex items-center justify-center text-blue-600 shadow-sm">
                   <BarChart3 className="w-7 h-7" />
                 </div>
                 Kết quả học tập
               </h3>
-              <div className="flex items-center gap-3">
-                <label className="text-xs font-bold text-stone-400 uppercase tracking-widest hidden md:block">Lọc theo đề thi:</label>
-                <select 
-                  value={selectedAssignment || ''}
-                  onChange={(e) => setSelectedAssignment(e.target.value || null)}
-                  className="p-3 rounded-xl border border-stone-200 outline-none focus:ring-2 focus:ring-blue-500 min-w-[250px] font-bold text-sm bg-stone-50 transition-all"
-                >
-                  <option value="">Tất cả đề thi</option>
-                  {assignments.map(as => <option key={as.id} value={as.id}>{as.title}</option>)}
-                </select>
-              </div>
+              {resultsSubTab === 'quiz' && (
+                <div className="flex items-center gap-3">
+                  <label className="text-xs font-bold text-stone-400 uppercase tracking-widest hidden md:block">Lọc theo đề thi:</label>
+                  <select 
+                    value={selectedAssignment || ''}
+                    onChange={(e) => setSelectedAssignment(e.target.value || null)}
+                    className="p-3 rounded-xl border border-stone-200 outline-none focus:ring-2 focus:ring-blue-500 min-w-[250px] font-bold text-sm bg-stone-50 transition-all"
+                  >
+                    <option value="">Tất cả đề thi</option>
+                    {assignments.map(as => <option key={as.id} value={as.id}>{as.title}</option>)}
+                  </select>
+                </div>
+              )}
             </div>
 
-            <div className="overflow-x-auto">
+            {/* Sub-tabs toggle */}
+            <div className="flex items-center p-1.5 bg-stone-100 rounded-2xl mb-6 gap-2 max-w-lg">
+              <button
+                onClick={() => setResultsSubTab('quiz')}
+                className={`flex-1 py-2 px-4 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 ${
+                  resultsSubTab === 'quiz'
+                    ? 'bg-white text-stone-900 shadow-sm border border-stone-200/60'
+                    : 'text-stone-500 hover:text-stone-800'
+                }`}
+              >
+                <FileText className="w-4 h-4" />
+                <span>Đề thi trắc nghiệm ({filteredResults.length})</span>
+              </button>
+              <button
+                onClick={() => setResultsSubTab('pronunciation')}
+                className={`flex-1 py-2 px-4 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 ${
+                  resultsSubTab === 'pronunciation'
+                    ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
+                    : 'text-stone-500 hover:text-stone-800'
+                }`}
+              >
+                <Volume2 className="w-4 h-4" />
+                <span>Luyện phát âm Tiếng Anh ({pronunciationResults.length})</span>
+              </button>
+            </div>
+
+            {resultsSubTab === 'quiz' ? (
+              <div className="overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="border-b border-stone-100 bg-stone-50/50">
@@ -1802,9 +1855,86 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                   </tbody>
                 </table>
               </div>
-            </div>
+            ) : (
+              /* Pronunciation Results Table for Teachers */
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-stone-100 bg-stone-50/50">
+                      <th className="py-4 px-6 text-xs font-bold uppercase tracking-widest text-stone-400">Học sinh</th>
+                      <th className="py-4 px-6 text-xs font-bold uppercase tracking-widest text-stone-400">Từ vựng luyện đọc</th>
+                      <th className="py-4 px-6 text-xs font-bold uppercase tracking-widest text-stone-400">Giọng đọc nhận diện</th>
+                      <th className="py-4 px-6 text-xs font-bold uppercase tracking-widest text-stone-400 text-center">Điểm số</th>
+                      <th className="py-4 px-6 text-xs font-bold uppercase tracking-widest text-stone-400 text-center">Thời gian</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pronunciationResults.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-12 text-center text-stone-400 italic">Chưa có lượt luyện phát âm nào được ghi nhận.</td>
+                      </tr>
+                    ) : (
+                      pronunciationResults.map((pRes) => {
+                        const studentName = allStudents.find(s => s.uid === pRes.uid)?.displayName || pRes.studentName || 'Học sinh';
+                        return (
+                          <motion.tr 
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            key={pRes.id} 
+                            className="border-b border-stone-50 hover:bg-emerald-50/30 transition-colors group"
+                          >
+                            <td className="py-4 px-6">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-full bg-white border border-stone-100 flex items-center justify-center text-emerald-600 group-hover:border-emerald-200 transition-all shadow-sm">
+                                  <User className="w-5 h-5" />
+                                </div>
+                                <div>
+                                  <p className="font-bold text-stone-900 group-hover:text-emerald-700 transition-colors">
+                                    {studentName}
+                                  </p>
+                                  <p className="text-[10px] text-stone-400 font-mono">{pRes.uid ? pRes.uid.substring(0, 8) : '---'}</p>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="py-4 px-6">
+                              <p className="text-sm font-bold text-emerald-800">{pRes.word}</p>
+                              {pRes.meaning && <p className="text-[10px] text-stone-400">{pRes.meaning}</p>}
+                            </td>
+                            <td className="py-4 px-6 font-mono text-xs text-stone-600 italic">
+                              "{pRes.userSpeech || '---'}"
+                            </td>
+                            <td className="py-4 px-6 text-center">
+                              <div className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-emerald-50 text-emerald-700 font-bold text-sm shadow-sm border border-emerald-100">
+                                🌟 {pRes.score}%
+                              </div>
+                            </td>
+                            <td className="py-4 px-6 text-center">
+                              <div className="flex flex-col items-center justify-center gap-1 text-xs text-stone-400">
+                                <div className="flex items-center gap-1">
+                                  <Clock className="w-3 h-3" />
+                                  {pRes.timestamp ? parseDate(pRes.timestamp).toLocaleDateString('vi-VN') : 'N/A'}
+                                </div>
+                                <span className="text-[10px] font-mono opacity-60">{pRes.timestamp ? parseDate(pRes.timestamp).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''}</span>
+                              </div>
+                            </td>
+                          </motion.tr>
+                        );
+                      }))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        )}
+        </div>
+      )}
+
+      {activeTab === 'SCAN_GRADING' && (
+        <ScanGrading 
+          classes={classes} 
+          currentTeacherUid={currentTeacherUid} 
+          userProfile={teacherProfile} 
+        />
+      )}
 
       {/* Toast Notification */}
       {toast && (

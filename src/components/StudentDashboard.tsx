@@ -7,7 +7,7 @@ import {
   TrendingUp, Award, BookOpenCheck, Bookmark, Flame, Coins, Target, GraduationCap, Crown,
   Volume2, VolumeX, Bot, Star, Smile, Wand2, Heart, PartyPopper
 } from 'lucide-react';
-import { Subject, SUBJECTS, Assignment, UserProfile, QuizResult, PREDEFINED_TOPICS, ClassRoom } from '../types';
+import { Subject, SUBJECTS, Assignment, UserProfile, QuizResult, PronunciationResult, PREDEFINED_TOPICS, ClassRoom } from '../types';
 import { db, auth, parseDate } from '../firebase';
 import { signOut } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, updateDoc, getDocs, orderBy, limit, setDoc } from 'firebase/firestore';
@@ -374,10 +374,12 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
   // States for dynamic leaderboard
   const [allStudents, setAllStudents] = useState<UserProfile[]>([]);
   const [allResults, setAllResults] = useState<QuizResult[]>([]);
+  const [pronunciationResults, setPronunciationResults] = useState<PronunciationResult[]>([]);
   const [allClasses, setAllClasses] = useState<ClassRoom[]>([]);
   const [leaderboardClassFilter, setLeaderboardClassFilter] = useState<string>('mine'); // Default to student's class
   const [leaderboardSubjectFilter, setLeaderboardSubjectFilter] = useState<string>('all');
   const [leaderboardSchoolFilter, setLeaderboardSchoolFilter] = useState<string>('mine'); // Default to student's school
+  const [leaderboardTabMode, setLeaderboardTabMode] = useState<'quiz' | 'pronunciation'>('quiz');
   const [homeLeaderboardScope, setHomeLeaderboardScope] = useState<'all' | 'mine'>(userProfile.classId ? 'mine' : 'all');
 
   // Real-time listeners for the leaderboard
@@ -405,10 +407,20 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
       setAllResults(list);
     });
 
+    // Subscribe to pronunciation results for English Pronunciation Leaderboard
+    const qPronunciation = query(collection(db, 'pronunciation_results'));
+    const unsubscribePronunciation = onSnapshot(qPronunciation, (snapshot) => {
+      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PronunciationResult));
+      setPronunciationResults(list);
+    }, (err) => {
+      console.error("Error fetching pronunciation results:", err);
+    });
+
     return () => {
       unsubscribeUsers();
       unsubscribeClasses();
       unsubscribeResults();
+      unsubscribePronunciation();
     };
   }, []);
 
@@ -495,18 +507,96 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
     });
     
     // 4. Sort by points desc, then count desc, then name asc
-    leaderboardList.sort((a, b) => {
-      if (b.points !== a.points) {
-        return b.points - a.points;
-      }
-      if (b.count !== a.count) {
-        return b.count - a.count;
-      }
-      return a.name.localeCompare(b.name);
-    });
-    
     // 5. Add ranking position
     return leaderboardList.map((item, idx) => ({
+      ...item,
+      rank: idx + 1
+    }));
+  };
+
+  const getPronunciationLeaderboardData = () => {
+    const studentPronunciationMap = new Map<string, {
+      uid: string;
+      name: string;
+      className: string;
+      schoolName: string;
+      count: number;
+      totalScore: number;
+      avgScore: number;
+      totalPoints: number;
+      wordsSet: Set<string>;
+      isCurrent: boolean;
+    }>();
+
+    allStudents.forEach(student => {
+      studentPronunciationMap.set(student.uid, {
+        uid: student.uid,
+        name: student.displayName || 'Học sinh',
+        className: student.classId ? (allClasses.find(c => c.id === student.classId)?.name || 'Lớp của bạn') : (student.grade || 'Học sinh'),
+        schoolName: student.schoolName || 'Trường học',
+        count: 0,
+        totalScore: 0,
+        avgScore: 0,
+        totalPoints: 0,
+        wordsSet: new Set<string>(),
+        isCurrent: student.uid === userProfile.uid
+      });
+    });
+
+    pronunciationResults.forEach(res => {
+      if (studentPronunciationMap.has(res.uid)) {
+        const item = studentPronunciationMap.get(res.uid)!;
+        item.count += 1;
+        item.totalScore += (res.score || 0);
+        item.totalPoints += Math.round(res.score || 0);
+        if (res.word) item.wordsSet.add(res.word.toLowerCase());
+      } else {
+        studentPronunciationMap.set(res.uid, {
+          uid: res.uid,
+          name: res.studentName || 'Học sinh',
+          className: res.className || res.grade || 'Học sinh',
+          schoolName: res.schoolName || 'Trường học',
+          count: 1,
+          totalScore: res.score || 0,
+          avgScore: res.score || 0,
+          totalPoints: Math.round(res.score || 0),
+          wordsSet: new Set<string>([res.word?.toLowerCase()].filter(Boolean) as string[]),
+          isCurrent: res.uid === userProfile.uid
+        });
+      }
+    });
+
+    let list = Array.from(studentPronunciationMap.values())
+      .filter(s => s.count > 0)
+      .map(s => ({
+        ...s,
+        avgScore: Math.round(s.totalScore / (s.count || 1)),
+        wordCount: s.wordsSet.size
+      }));
+
+    if (leaderboardClassFilter === 'mine' && userProfile.classId) {
+      const userClassObj = allClasses.find(c => c.id === userProfile.classId);
+      list = list.filter(s => {
+        const st = allStudents.find(usr => usr.uid === s.uid);
+        return st?.classId === userProfile.classId || (userClassObj && s.className === userClassObj.name);
+      });
+    } else if (leaderboardClassFilter !== 'all' && leaderboardClassFilter !== 'mine') {
+      const targetClassObj = allClasses.find(c => c.id === leaderboardClassFilter);
+      list = list.filter(s => {
+        const st = allStudents.find(usr => usr.uid === s.uid);
+        return st?.classId === leaderboardClassFilter || (targetClassObj && s.className === targetClassObj.name);
+      });
+    }
+
+    if (leaderboardSchoolFilter === 'mine' && userProfile.schoolName) {
+      list = list.filter(s => s.schoolName === userProfile.schoolName);
+    } else if (leaderboardSchoolFilter !== 'all' && leaderboardSchoolFilter !== 'mine') {
+      list = list.filter(s => s.schoolName === leaderboardSchoolFilter);
+    }
+
+    list.sort((a, b) => b.totalPoints - a.totalPoints || b.avgScore - a.avgScore);
+
+    return list.map((item, idx) => ({
       ...item,
       rank: idx + 1
     }));
@@ -2829,6 +2919,87 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                   </div>
                 )}
               </div>
+
+              {/* Pronunciation Practice History Table */}
+              <div className="bg-white rounded-3xl border border-stone-100 shadow-sm overflow-hidden">
+                <div className="p-6 border-b border-stone-100 flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-xl">
+                      <Volume2 className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-stone-800">Lịch sử Luyện phát âm Tiếng Anh</h3>
+                      <p className="text-[10px] text-stone-400 mt-0.5">Tổng hợp điểm phát âm các từ vựng đã luyện tập</p>
+                    </div>
+                  </div>
+                  <span className="text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 px-3 py-1 rounded-full font-mono">
+                    {pronunciationResults.filter(p => p.uid === userProfile.uid).length} từ vựng
+                  </span>
+                </div>
+
+                {pronunciationResults.filter(p => p.uid === userProfile.uid).length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-stone-50 text-stone-400 font-bold text-[10px] uppercase tracking-wider font-mono border-b border-stone-100">
+                          <th className="py-4 px-6">Ngày luyện</th>
+                          <th className="py-4 px-6">Từ vựng / Nghĩa</th>
+                          <th className="py-4 px-6">Giọng đọc nhận diện</th>
+                          <th className="py-4 px-6">Điểm phát âm</th>
+                          <th className="py-4 px-6 text-right">Đánh giá</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-stone-50">
+                        {pronunciationResults
+                          .filter(p => p.uid === userProfile.uid)
+                          .map((pRes) => {
+                            const date = parseDate(pRes.timestamp);
+                            let scoreBadge = 'text-red-500 bg-red-50 border-red-100';
+                            let statusText = 'Cần luyện thêm';
+                            if (pRes.score >= 80) {
+                              scoreBadge = 'text-emerald-600 bg-emerald-50 border-emerald-100';
+                              statusText = 'Xuất Sắc 🌟';
+                            } else if (pRes.score >= 60) {
+                              scoreBadge = 'text-amber-600 bg-amber-50 border-amber-100';
+                              statusText = 'Khá Good 👍';
+                            }
+
+                            return (
+                              <tr key={pRes.id} className="text-xs hover:bg-stone-50/50 transition-colors">
+                                <td className="py-4 px-6 font-medium text-stone-500 font-mono">
+                                  {date.toLocaleDateString('vi-VN')} {date.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                                </td>
+                                <td className="py-4 px-6">
+                                  <div className="font-bold text-emerald-700 text-sm">{pRes.word}</div>
+                                  {pRes.meaning && <div className="text-[10px] text-stone-400">{pRes.meaning}</div>}
+                                </td>
+                                <td className="py-4 px-6 italic text-stone-600 font-mono">
+                                  "{pRes.userSpeech || '---'}"
+                                </td>
+                                <td className="py-4 px-6">
+                                  <div className="flex items-center gap-2">
+                                    <span className="font-extrabold text-sm text-stone-800">{pRes.score}%</span>
+                                  </div>
+                                </td>
+                                <td className="py-4 px-6 text-right">
+                                  <span className={`px-2.5 py-1 rounded-full font-bold text-[9px] border uppercase ${scoreBadge}`}>
+                                    {statusText}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="p-8 text-center flex flex-col items-center">
+                    <Volume2 className="w-10 h-10 text-stone-200 mb-3" />
+                    <h4 className="text-xs font-bold text-stone-700">Chưa có lịch sử phát âm</h4>
+                    <p className="text-[11px] text-stone-400 mt-1 max-w-xs leading-relaxed">Hãy tham gia bài thi Tiếng Anh và bật tính năng Luyện nói để ghi nhận điểm số phát âm nhé!</p>
+                  </div>
+                )}
+              </div>
             </motion.div>
           )}
 
@@ -2923,6 +3094,31 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                   </div>
                 </div>
 
+                {/* MODE SWITCHER TABS (Trắc nghiệm vs Phát âm Tiếng Anh) */}
+                <div className="flex items-center p-1.5 bg-stone-100 rounded-2xl mb-6 gap-2">
+                  <button
+                    onClick={() => setLeaderboardTabMode('quiz')}
+                    className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 ${
+                      leaderboardTabMode === 'quiz'
+                        ? 'bg-white text-stone-900 shadow-sm border border-stone-200/60'
+                        : 'text-stone-500 hover:text-stone-800'
+                    }`}
+                  >
+                    <span>📝 Thi Trắc Nghiệm</span>
+                  </button>
+                  <button
+                    onClick={() => setLeaderboardTabMode('pronunciation')}
+                    className={`flex-1 py-2.5 px-4 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 ${
+                      leaderboardTabMode === 'pronunciation'
+                        ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
+                        : 'text-stone-500 hover:text-stone-800'
+                    }`}
+                  >
+                    <Volume2 className="w-4 h-4" />
+                    <span>🎙️ Phát Âm Tiếng Anh (Bảng Xếp Hạng Riêng)</span>
+                  </button>
+                </div>
+
                 {/* FILTER CONTROLS */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
                   {/* Class Filter */}
@@ -2949,20 +3145,22 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                     </select>
                   </div>
 
-                  {/* Subject Filter */}
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-bold uppercase tracking-widest text-stone-400">Xếp hạng theo môn</label>
-                    <select
-                      value={leaderboardSubjectFilter}
-                      onChange={(e) => setLeaderboardSubjectFilter(e.target.value)}
-                      className="w-full text-xs font-semibold px-3 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-stone-700 focus:outline-none focus:ring-2 focus:ring-[#2563eb]"
-                    >
-                      <option value="all">Tất cả các môn</option>
-                      <option value="Toán">Môn Toán</option>
-                      <option value="Tiếng Việt">Môn Tiếng Việt</option>
-                      <option value="Tiếng Anh">Môn Tiếng Anh</option>
-                    </select>
-                  </div>
+                  {/* Subject Filter (Only for Quiz mode) */}
+                  {leaderboardTabMode === 'quiz' && (
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-bold uppercase tracking-widest text-stone-400">Xếp hạng theo môn</label>
+                      <select
+                        value={leaderboardSubjectFilter}
+                        onChange={(e) => setLeaderboardSubjectFilter(e.target.value)}
+                        className="w-full text-xs font-semibold px-3 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-stone-700 focus:outline-none focus:ring-2 focus:ring-[#2563eb]"
+                      >
+                        <option value="all">Tất cả các môn</option>
+                        <option value="Toán">Môn Toán</option>
+                        <option value="Tiếng Việt">Môn Tiếng Việt</option>
+                        <option value="Tiếng Anh">Môn Tiếng Anh</option>
+                      </select>
+                    </div>
+                  )}
 
                   {/* School Filter */}
                   <div className="space-y-1">
@@ -2988,76 +3186,153 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                 </div>
 
                 {/* SCORING RULES EXPLANATION */}
-                <div className="p-3.5 bg-amber-50/50 border border-amber-100 rounded-2xl mb-6 text-stone-600 text-[11px] leading-relaxed">
-                  <div className="flex items-start gap-2.5">
-                    <div className="p-1 bg-amber-100 text-amber-600 rounded-lg mt-0.5">
-                      <Sparkles className="w-3.5 h-3.5" />
-                    </div>
-                    <div>
-                      <span className="font-bold text-amber-800">Quy tắc tính điểm xếp hạng:</span>
-                      <ul className="list-disc list-inside mt-1.5 space-y-1 text-stone-500 font-medium">
-                        <li>Làm bài tập <span className="text-amber-800 font-bold">đúng khối lớp</span> của mình: Nhận <span className="text-[#2563eb] font-bold font-mono">+1 điểm</span> cho mỗi câu trả lời đúng.</li>
-                        <li>Làm bài tập <span className="text-amber-800 font-bold">vượt khối lớp</span> (vượt lớp): Nhận <span className="text-[#2563eb] font-bold font-mono">+2 điểm</span> cho mỗi câu trả lời đúng.</li>
-                        <li>Làm bài tập <span className="text-amber-800 font-bold">nhỏ hơn khối lớp</span> của mình: Nhận <span className="text-[#2563eb] font-bold font-mono">+0.5 điểm</span> cho mỗi câu trả lời đúng.</li>
-                      </ul>
+                {leaderboardTabMode === 'quiz' ? (
+                  <div className="p-3.5 bg-amber-50/50 border border-amber-100 rounded-2xl mb-6 text-stone-600 text-[11px] leading-relaxed">
+                    <div className="flex items-start gap-2.5">
+                      <div className="p-1 bg-amber-100 text-amber-600 rounded-lg mt-0.5">
+                        <Sparkles className="w-3.5 h-3.5" />
+                      </div>
+                      <div>
+                        <span className="font-bold text-amber-800">Quy tắc tính điểm xếp hạng thi trắc nghiệm:</span>
+                        <ul className="list-disc list-inside mt-1.5 space-y-1 text-stone-500 font-medium">
+                          <li>Làm bài tập <span className="text-amber-800 font-bold">đúng khối lớp</span> của mình: Nhận <span className="text-[#2563eb] font-bold font-mono">+1 điểm</span> cho mỗi câu trả lời đúng.</li>
+                          <li>Làm bài tập <span className="text-amber-800 font-bold">vượt khối lớp</span> (vượt lớp): Nhận <span className="text-[#2563eb] font-bold font-mono">+2 điểm</span> cho mỗi câu trả lời đúng.</li>
+                          <li>Làm bài tập <span className="text-amber-800 font-bold">nhỏ hơn khối lớp</span> của mình: Nhận <span className="text-[#2563eb] font-bold font-mono">+0.5 điểm</span> cho mỗi câu trả lời đúng.</li>
+                        </ul>
+                      </div>
                     </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="p-3.5 bg-emerald-50/60 border border-emerald-100 rounded-2xl mb-6 text-stone-600 text-[11px] leading-relaxed">
+                    <div className="flex items-start gap-2.5">
+                      <div className="p-1 bg-emerald-100 text-emerald-700 rounded-lg mt-0.5">
+                        <Volume2 className="w-3.5 h-3.5" />
+                      </div>
+                      <div>
+                        <span className="font-bold text-emerald-800">Quy tắc tích điểm phát âm Tiếng Anh:</span>
+                        <p className="mt-1 text-stone-600 font-medium">
+                          Điểm phát âm được tổng hợp từ độ chính xác giọng đọc của bạn trong mỗi từ vựng luyện tập. Điểm tổng = Tổng điểm phát âm (%) + Tích lũy số lượt phát âm đạt chuẩn!
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* LEADERBOARD LIST */}
-                <div className="space-y-3">
-                  {getLeaderboardData().length === 0 ? (
-                    <div className="py-12 text-center text-stone-400 font-semibold flex flex-col items-center justify-center gap-2">
-                      <BookOpen className="w-8 h-8 text-stone-300" />
-                      <p className="text-xs">Chưa có kết quả học tập nào khớp với bộ lọc đã chọn.</p>
-                    </div>
-                  ) : (
-                    getLeaderboardData().map((student) => (
-                      <div 
-                        key={student.uid} 
-                        className={`p-4 rounded-2xl flex items-center justify-between border text-xs transition-all ${
-                          student.isCurrent 
-                            ? 'bg-blue-50/50 border-blue-200/50 shadow-sm shadow-blue-100/50' 
-                            : 'bg-stone-50 border-stone-100 hover:bg-stone-100/50'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3 min-w-0">
-                          <span className="w-8 flex justify-center text-center font-black font-mono text-sm">
-                            {student.rank === 1 ? (
-                              <span className="text-xl">🥇</span>
-                            ) : student.rank === 2 ? (
-                              <span className="text-xl">🥈</span>
-                            ) : student.rank === 3 ? (
-                              <span className="text-xl">🥉</span>
-                            ) : (
-                              <span className="text-stone-400">{student.rank}</span>
-                            )}
-                          </span>
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className={`font-bold truncate ${student.isCurrent ? 'text-[#2563eb]' : 'text-stone-800'}`}>
-                                {student.name}
-                              </span>
-                              {student.isCurrent && (
-                                <span className="text-[9px] font-bold bg-blue-100 text-[#2563eb] px-1.5 py-0.5 rounded-full">Bạn</span>
+                {leaderboardTabMode === 'quiz' ? (
+                  <div className="space-y-3">
+                    {getLeaderboardData().length === 0 ? (
+                      <div className="py-12 text-center text-stone-400 font-semibold flex flex-col items-center justify-center gap-2">
+                        <BookOpen className="w-8 h-8 text-stone-300" />
+                        <p className="text-xs">Chưa có kết quả học tập nào khớp với bộ lọc đã chọn.</p>
+                      </div>
+                    ) : (
+                      getLeaderboardData().map((student) => (
+                        <div 
+                          key={student.uid} 
+                          className={`p-4 rounded-2xl flex items-center justify-between border text-xs transition-all ${
+                            student.isCurrent 
+                              ? 'bg-blue-50/50 border-blue-200/50 shadow-sm shadow-blue-100/50' 
+                              : 'bg-stone-50 border-stone-100 hover:bg-stone-100/50'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span className="w-8 flex justify-center text-center font-black font-mono text-sm">
+                              {student.rank === 1 ? (
+                                <span className="text-xl">🥇</span>
+                              ) : student.rank === 2 ? (
+                                <span className="text-xl">🥈</span>
+                              ) : student.rank === 3 ? (
+                                <span className="text-xl">🥉</span>
+                              ) : (
+                                <span className="text-stone-400">{student.rank}</span>
                               )}
+                            </span>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className={`font-bold truncate ${student.isCurrent ? 'text-[#2563eb]' : 'text-stone-800'}`}>
+                                  {student.name}
+                                </span>
+                                {student.isCurrent && (
+                                  <span className="text-[9px] font-bold bg-blue-100 text-[#2563eb] px-1.5 py-0.5 rounded-full">Bạn</span>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-stone-400 font-medium truncate mt-0.5">
+                                {student.className} • {student.schoolName}
+                              </p>
                             </div>
-                            <p className="text-[10px] text-stone-400 font-medium truncate mt-0.5">
-                              {student.className} • {student.schoolName}
-                            </p>
+                          </div>
+                          <div className="flex items-center gap-6 text-stone-500 font-semibold font-mono shrink-0 pl-4">
+                            <span className="hidden sm:inline text-[11px]">{student.count} lượt thi</span>
+                            <span className="font-extrabold text-stone-900 text-sm bg-stone-100/80 px-3 py-1.5 rounded-xl border border-stone-200/50 flex items-center gap-1">
+                              <span className="text-amber-500">★</span>
+                              <span>{student.points.toLocaleString()} điểm</span>
+                            </span>
                           </div>
                         </div>
-                        <div className="flex items-center gap-6 text-stone-500 font-semibold font-mono shrink-0 pl-4">
-                          <span className="hidden sm:inline text-[11px]">{student.count} lượt thi</span>
-                          <span className="font-extrabold text-stone-900 text-sm bg-stone-100/80 px-3 py-1.5 rounded-xl border border-stone-200/50 flex items-center gap-1">
-                            <span className="text-amber-500">★</span>
-                            <span>{student.points.toLocaleString()} điểm</span>
-                          </span>
-                        </div>
+                      ))
+                    )}
+                  </div>
+                ) : (
+                  /* PRONUNCIATION LEADERBOARD LIST */
+                  <div className="space-y-3">
+                    {getPronunciationLeaderboardData().length === 0 ? (
+                      <div className="py-12 text-center text-stone-400 font-semibold flex flex-col items-center justify-center gap-2">
+                        <Volume2 className="w-8 h-8 text-stone-300" />
+                        <p className="text-xs">Chưa có điểm luyện phát âm Tiếng Anh nào khớp với bộ lọc đã chọn.</p>
                       </div>
-                    ))
-                  )}
-                </div>
+                    ) : (
+                      getPronunciationLeaderboardData().map((student) => (
+                        <div 
+                          key={student.uid} 
+                          className={`p-4 rounded-2xl flex items-center justify-between border text-xs transition-all ${
+                            student.isCurrent 
+                              ? 'bg-emerald-50/50 border-emerald-200/50 shadow-sm shadow-emerald-100/50' 
+                              : 'bg-stone-50 border-stone-100 hover:bg-stone-100/50'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span className="w-8 flex justify-center text-center font-black font-mono text-sm">
+                              {student.rank === 1 ? (
+                                <span className="text-xl">🥇</span>
+                              ) : student.rank === 2 ? (
+                                <span className="text-xl">🥈</span>
+                              ) : student.rank === 3 ? (
+                                <span className="text-xl">🥉</span>
+                              ) : (
+                                <span className="text-stone-400">{student.rank}</span>
+                              )}
+                            </span>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className={`font-bold truncate ${student.isCurrent ? 'text-emerald-700' : 'text-stone-800'}`}>
+                                  {student.name}
+                                </span>
+                                {student.isCurrent && (
+                                  <span className="text-[9px] font-bold bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded-full">Bạn</span>
+                                )}
+                              </div>
+                              <p className="text-[10px] text-stone-400 font-medium truncate mt-0.5">
+                                {student.className} • {student.schoolName}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4 text-stone-500 font-semibold font-mono shrink-0 pl-4">
+                            <span className="hidden sm:inline text-[11px] bg-stone-100 px-2 py-0.5 rounded text-stone-600">
+                              {student.wordCount} từ vựng ({student.count} lượt đọc)
+                            </span>
+                            <div className="flex flex-col items-end">
+                              <span className="font-black text-emerald-700 text-sm bg-emerald-50 px-3 py-1 rounded-xl border border-emerald-200 flex items-center gap-1">
+                                <span className="text-emerald-500">🌟</span>
+                                <span>TB {student.avgScore}%</span>
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
             </motion.div>
           )}

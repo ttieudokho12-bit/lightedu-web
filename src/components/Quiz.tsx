@@ -874,6 +874,7 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject }
     return (
       <SpeakingPractice 
         vocabList={vocabList}
+        subject={subject}
         onComplete={() => {
           setShowSpeakingPractice(false);
         }}
