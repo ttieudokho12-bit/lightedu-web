@@ -116,7 +116,7 @@ async function generateContentWithRetry(options: {
 }
 
 // Highly sophisticated local fallback question generator
-function generateLocalQuestions(subject: string, topic: string, count: number, difficulty?: string): any[] {
+function generateLocalQuestions(subject: string, topic: string, count: number, difficulty?: string, englishPercent?: number): any[] {
   const normSubject = (subject || "").toLowerCase();
   const normTopic = (topic || "").toLowerCase();
   const diff = difficulty || "Medium";
@@ -140,6 +140,28 @@ function generateLocalQuestions(subject: string, topic: string, count: number, d
     domain = "văn";
   } else if (normSubject.includes("anh") || normSubject.includes("english") || normSubject.includes("tiếng anh")) {
     domain = "anh";
+  }
+
+  // Handle English percentage mixing if requested for non-English subjects
+  if (englishPercent && englishPercent > 0 && domain !== 'anh') {
+    const englishCount = Math.max(1, Math.round(count * (englishPercent / 100)));
+    const primaryCount = Math.max(0, count - englishCount);
+    const engQuestions = generateLocalQuestions(`Tiếng Anh Lớp ${grade}`, topic, englishCount, difficulty);
+    const primaryQuestions = primaryCount > 0 ? generateLocalQuestions(subject, topic, primaryCount, difficulty) : [];
+    
+    const combined: any[] = [];
+    let pIdx = 0;
+    let eIdx = 0;
+    while (combined.length < count) {
+      if (pIdx < primaryQuestions.length) {
+        combined.push(primaryQuestions[pIdx++]);
+      }
+      if (eIdx < engQuestions.length && combined.length < count) {
+        combined.push(engQuestions[eIdx++]);
+      }
+      if (pIdx >= primaryQuestions.length && eIdx >= engQuestions.length) break;
+    }
+    return combined.slice(0, count);
   }
 
   let pool: any[] = [];
@@ -1195,7 +1217,8 @@ async function startServer() {
     customInstructions,
     difficulty,
     content,
-    hasParts
+    hasParts,
+    englishPercent
   }: {
     subject: string;
     topic?: string;
@@ -1204,6 +1227,7 @@ async function startServer() {
     difficulty?: string;
     content?: string;
     hasParts?: boolean;
+    englishPercent?: number;
   }) {
     const gradeMatch = subject.match(/\d+/);
     const grade = gradeMatch ? parseInt(gradeMatch[0], 10) : 9;
@@ -1355,12 +1379,39 @@ Hãy bám sát nội dung tài liệu trên để thiết kế các câu hỏi p
       mainContext = `Chủ đề bài học / Tên bài học cần tạo câu hỏi là: "${topic}".`;
     }
 
+    let englishPercentRequirement = "";
+    if (coreSubject !== "Tiếng Anh") {
+      if (englishPercent !== undefined && englishPercent > 0) {
+        const englishQCount = Math.max(1, Math.round(count * (englishPercent / 100)));
+        const vietQCount = Math.max(0, count - englishQCount);
+        englishPercentRequirement = `
+- YÊU CẦU ĐẶC BIỆT VỀ TỈ LỆ CÂU HỎI TIẾNG ANH (SONG NGỮ / BILINGUAL):
+  + Tỉ lệ câu hỏi Tiếng Anh được học sinh lựa chọn: ${englishPercent}%.
+  + Trong đúng ${count} câu hỏi được tạo ra: BẮT BUỘC PHẢI CÓ ĐÚNG ${englishQCount} câu hỏi (${englishPercent}%) được viết bằng TIẾNG ANH (đối với môn Toán/Tiếng Việt, câu hỏi được trình bày bằng Tiếng Anh chuẩn mực kèm thuật ngữ tiếng Anh giúp học sinh rèn luyện tư duy toán tiếng Anh và từ vựng), và ${vietQCount} câu hỏi bằng Tiếng Việt.
+  + ${englishPercent === 100 ? 'TOÀN BỘ 100% tất cả các câu hỏi và các lựa chọn đáp án A, B, C, D đều PHẢI ĐƯỢC VIẾT HOÀN TOÀN BẰNG TIẾNG ANH.' : `Hãy phân bố đều ${englishQCount} câu Tiếng Anh xen kẽ hài hòa với các câu Tiếng Việt trong đề thi.`}`;
+      } else if (englishPercent === 0) {
+        englishPercentRequirement = `
+- YÊU CẦU ĐẶC BIỆT VỀ TỈ LỆ CÂU HỎI (0% TIẾNG ANH - 100% TIẾNG VIỆT):
+  + Tỉ lệ câu hỏi Tiếng Anh: 0% (100% Tiếng Việt).
+  + TOÀN BỘ ${count} câu hỏi và tất cả các lựa chọn đáp án A, B, C, D đều PHẢI ĐƯỢC VIẾT HOÀN TOÀN BẰNG TIẾNG VIỆT. Tuyệt đối không chèn từ vựng tiếng Anh hay câu hỏi bằng tiếng Anh.`;
+      }
+    }
+
+    const quizLanguageDesc = coreSubject === 'Tiếng Anh'
+      ? 'môn Tiếng Anh'
+      : englishPercent === 100
+        ? 'bằng Tiếng Anh'
+        : englishPercent && englishPercent > 0
+          ? `song ngữ với tỉ lệ ${englishPercent}% Tiếng Anh`
+          : 'hoàn toàn bằng Tiếng Việt (0% Tiếng Anh)';
+
     const prompt = `${persona}
-Hãy tạo đúng ${count} câu hỏi trắc nghiệm tiếng Việt sinh động, hấp dẫn, ${targetAudience} về môn ${subject}.
+Hãy tạo đúng ${count} câu hỏi trắc nghiệm ${quizLanguageDesc} sinh động, hấp dẫn, ${targetAudience} về môn ${subject}.
 
 QUY TẮC SƯ PHẠM VÀ KIẾN THỨC KHỐI LỚP:
 ${gradePedagogy}
 ${englishRequirements}
+${englishPercentRequirement}
 
 YÊU CẦU ĐỐI VỚI CHỦ ĐỀ BÀI HỌC:
 - ${mainContext}
@@ -1397,7 +1448,7 @@ QUAN TRỌNG:
 - Ví dụ: "Cho $\\triangle ABC$ vuông tại $A$, có $\\widehat{B} = 30^\\circ$. Tính $\\sin C$." hoặc "Cho đường tròn $(O)$ và dây cung $AB$ sao cho $OH \\perp AB$ tại $H$."
 - Tuyệt đối KHÔNG tạo hình vẽ hoặc hình ảnh minh họa cho câu hỏi (trường "imagePrompt" phải luôn luôn để trống "").
 
-Ngôn ngữ: Tiếng Việt.`;
+${englishPercent === 100 ? 'Ngôn ngữ: 100% Tiếng Anh (English).' : englishPercent && englishPercent > 0 ? `Ngôn ngữ: Kết hợp ${englishPercent}% câu hỏi Tiếng Anh và ${100 - englishPercent}% câu hỏi Tiếng Việt.` : 'Ngôn ngữ: 100% Tiếng Việt (0% Tiếng Anh).'}`;
 
     return prompt;
   }
@@ -1446,13 +1497,14 @@ Ngôn ngữ: Tiếng Việt.`;
   // Gemini API Route to generate questions from subject and topic
   app.post('/api/gemini/generate-questions', async (req, res) => {
     try {
-      const { subject, topic, count, customInstructions, difficulty } = req.body;
+      const { subject, topic, count, customInstructions, difficulty, englishPercent } = req.body;
       const prompt = getGradeAndSubjectPrompt({
         subject,
         topic,
         count,
         customInstructions,
-        difficulty
+        difficulty,
+        englishPercent
       });
 
       const questions = await callGeminiOnServer([ { role: 'user', parts: [ { text: prompt } ] } ]);
@@ -1460,8 +1512,8 @@ Ngôn ngữ: Tiếng Việt.`;
     } catch (error: any) {
       console.warn("Error generating questions, falling back to local generator:", error);
       try {
-        const { subject, topic, count, difficulty } = req.body;
-        const fallback = generateLocalQuestions(subject, topic, count, difficulty);
+        const { subject, topic, count, difficulty, englishPercent } = req.body;
+        const fallback = generateLocalQuestions(subject, topic, count, difficulty, englishPercent);
         res.json(fallback);
       } catch (innerErr) {
         res.status(500).json({ error: handleGeminiError(error) });
@@ -1469,16 +1521,410 @@ Ngôn ngữ: Tiếng Việt.`;
     }
   });
 
+  // Local fallback generator for 2-choice tilt body questions
+  function generateLocalTiltQuestions(topic: string, subject?: string, grade?: string, count: number = 8): any[] {
+    const normTopic = (topic || '').toLowerCase();
+    const normSub = (subject || '').toLowerCase();
+    const pool: any[] = [];
+    const makeId = () => "tilt_" + Math.random().toString(36).substring(2, 9);
+
+    if (normTopic.includes('nhân') || normTopic.includes('chia') || normTopic.includes('cửu chương') || normTopic.includes('toán') || normSub.includes('math') || normSub.includes('toán') || normTopic.includes('cộng') || normTopic.includes('trừ')) {
+      pool.push(
+        {
+          id: makeId(),
+          subject: 'math',
+          question: '7 × 8 = 56 đúng hay sai?',
+          optionA: 'ĐÚNG (Nghiêng Trái ⬅️)',
+          optionB: 'SAI (Nghiêng Phải ➡️)',
+          correctOption: 'A',
+          explanation: 'Theo bảng nhân 7: 7 × 8 = 56. Đây là phép tính hoàn toàn chính xác!'
+        },
+        {
+          id: makeId(),
+          subject: 'math',
+          question: 'Số nào sau đây là số chẵn?',
+          optionA: 'Số 48 (Nghiêng Trái ⬅️)',
+          optionB: 'Số 37 (Nghiêng Phải ➡️)',
+          correctOption: 'A',
+          explanation: 'Số chẵn là số có chữ số tận cùng là 0, 2, 4, 6, 8. Do đó 48 là số chẵn.'
+        },
+        {
+          id: makeId(),
+          subject: 'math',
+          question: '1 giờ có bao nhiêu phút?',
+          optionA: '60 phút (Nghiêng Trái ⬅️)',
+          optionB: '100 phút (Nghiêng Phải ➡️)',
+          correctOption: 'A',
+          explanation: 'Quy đổi thời gian tiêu chuẩn: 1 giờ = 60 phút, 1 phút = 60 giây.'
+        },
+        {
+          id: makeId(),
+          subject: 'math',
+          question: 'Hình vuông có 4 cạnh dài bằng nhau đúng hay sai?',
+          optionA: 'SAI (Nghiêng Trái ⬅️)',
+          optionB: 'ĐÚNG (Nghiêng Phải ➡️)',
+          correctOption: 'B',
+          explanation: 'Hình vuông là hình tứ giác có 4 góc vuông và 4 cạnh dài bằng nhau.'
+        },
+        {
+          id: makeId(),
+          subject: 'math',
+          question: 'Kết quả của phép tính: 100 - 35 = ?',
+          optionA: '75 (Nghiêng Trái ⬅️)',
+          optionB: '65 (Nghiêng Phải ➡️)',
+          correctOption: 'B',
+          explanation: 'Thực hiện phép trừ: 100 - 35 = 65.'
+        },
+        {
+          id: makeId(),
+          subject: 'math',
+          question: 'Phân số 1/2 bằng phân số 2/4 đúng hay sai?',
+          optionA: 'ĐÚNG (Nghiêng Trái ⬅️)',
+          optionB: 'SAI (Nghiêng Phải ➡️)',
+          correctOption: 'A',
+          explanation: 'Rút gọn 2/4 chia cả tử và mẫu cho 2 ta được 1/2. Hai phân số này bằng nhau.'
+        },
+        {
+          id: makeId(),
+          subject: 'math',
+          question: 'Số lớn nhất có hai chữ số là số nào?',
+          optionA: '99 (Nghiêng Trái ⬅️)',
+          optionB: '100 (Nghiêng Phải ➡️)',
+          correctOption: 'A',
+          explanation: 'Số 99 là số lớn nhất có 2 chữ số, còn 100 là số nhỏ nhất có 3 chữ số.'
+        },
+        {
+          id: makeId(),
+          subject: 'math',
+          question: '9 × 6 bằng bao nhiêu?',
+          optionA: '45 (Nghiêng Trái ⬅️)',
+          optionB: '54 (Nghiêng Phải ➡️)',
+          correctOption: 'B',
+          explanation: 'Theo bảng nhân 9: 9 × 6 = 54.'
+        }
+      );
+    } else if (normTopic.includes('tiếng anh') || normTopic.includes('english') || normTopic.includes('từ vựng') || normSub.includes('english') || normTopic.includes('animal') || normTopic.includes('gia đình')) {
+      pool.push(
+        {
+          id: makeId(),
+          subject: 'english',
+          question: 'Từ tiếng Anh chỉ con "Mèo" là từ nào?',
+          optionA: 'Cat (Nghiêng Trái ⬅️)',
+          optionB: 'Dog (Nghiêng Phải ➡️)',
+          correctOption: 'A',
+          explanation: 'Cat là con mèo, còn Dog là con chó.'
+        },
+        {
+          id: makeId(),
+          subject: 'english',
+          question: 'Chọn từ đúng: "An ______ a day keeps the doctor away."',
+          optionA: 'Banana (Nghiêng Trái ⬅️)',
+          optionB: 'Apple (Nghiêng Phải ➡️)',
+          correctOption: 'B',
+          explanation: 'Thành ngữ nổi tiếng: "An apple a day keeps the doctor away". Trước nguyên âm "a" ta dùng "An apple".'
+        },
+        {
+          id: makeId(),
+          subject: 'english',
+          question: 'Từ trái nghĩa với "Big" (To lớn) là gì?',
+          optionA: 'Small (Nghiêng Trái ⬅️)',
+          optionB: 'Tall (Nghiêng Phải ➡️)',
+          correctOption: 'A',
+          explanation: 'Big = To lớn; Trái nghĩa là Small = Bé nhỏ.'
+        },
+        {
+          id: makeId(),
+          subject: 'english',
+          question: 'Màu vàng trong Tiếng Anh viết là gì?',
+          optionA: 'Blue (Nghiêng Trái ⬅️)',
+          optionB: 'Yellow (Nghiêng Phải ➡️)',
+          correctOption: 'B',
+          explanation: 'Yellow là màu vàng, Blue là màu xanh da trời.'
+        },
+        {
+          id: makeId(),
+          subject: 'english',
+          question: 'Điền vào chỗ trống: "They ______ playing football in the yard."',
+          optionA: 'are (Nghiêng Trái ⬅️)',
+          optionB: 'is (Nghiêng Phải ➡️)',
+          correctOption: 'A',
+          explanation: 'Chủ ngữ số nhiều "They" đi với động từ to-be là "are".'
+        },
+        {
+          id: makeId(),
+          subject: 'english',
+          question: 'Từ "Sun" trong tiếng Anh có nghĩa là gì?',
+          optionA: 'Mặt trăng (Nghiêng Trái ⬅️)',
+          optionB: 'Mặt trời (Nghiêng Phải ➡️)',
+          correctOption: 'B',
+          explanation: 'Sun = Mặt trời, còn Moon = Mặt trăng.'
+        },
+        {
+          id: makeId(),
+          subject: 'english',
+          question: '"Good morning" dùng để chào vào thời điểm nào?',
+          optionA: 'Buổi sáng (Nghiêng Trái ⬅️)',
+          optionB: 'Buổi tối (Nghiêng Phải ➡️)',
+          correctOption: 'A',
+          explanation: '"Good morning" là lời chào buổi sáng, còn buổi tối là "Good evening".'
+        },
+        {
+          id: makeId(),
+          subject: 'english',
+          question: 'Số 12 trong tiếng Anh đọc là gì?',
+          optionA: 'Eleven (Nghiêng Trái ⬅️)',
+          optionB: 'Twelve (Nghiêng Phải ➡️)',
+          correctOption: 'B',
+          explanation: '11 = Eleven, 12 = Twelve.'
+        }
+      );
+    } else if (normTopic.includes('tiếng việt') || normTopic.includes('văn') || normTopic.includes('chính tả') || normTopic.includes('thành ngữ') || normSub.includes('vietnamese') || normTopic.includes('từ ghép')) {
+      pool.push(
+        {
+          id: makeId(),
+          subject: 'vietnamese',
+          question: 'Trong câu "Bác nông dân đang cày ruộng", từ nào là Động từ?',
+          optionA: 'Cày (Nghiêng Trái ⬅️)',
+          optionB: 'Ruộng (Nghiêng Phải ➡️)',
+          correctOption: 'A',
+          explanation: '"Cày" là từ chỉ hoạt động (Động từ), còn "ruộng" và "Bác nông dân" là Danh từ.'
+        },
+        {
+          id: makeId(),
+          subject: 'vietnamese',
+          question: 'Điền từ còn thiếu vào câu thành ngữ: "Uống nước nhớ ______"?',
+          optionA: 'nguồn (Nghiêng Trái ⬅️)',
+          optionB: 'suối (Nghiêng Phải ➡️)',
+          correctOption: 'A',
+          explanation: 'Thành ngữ truyền thống của dân tộc: "Uống nước nhớ nguồn" nhắc nhở lòng biết ơn.'
+        },
+        {
+          id: makeId(),
+          subject: 'vietnamese',
+          question: 'Từ nào viết ĐÚNG chính tả?',
+          optionA: 'Xum xuê (Nghiêng Trái ⬅️)',
+          optionB: 'Sum sê (Nghiêng Phải ➡️)',
+          correctOption: 'B',
+          explanation: 'Theo từ điển chuẩn tiếng Việt, từ đúng chính tả là "Sum sê" (chỉ cây cối tốt tươi).'
+        },
+        {
+          id: makeId(),
+          subject: 'vietnamese',
+          question: 'Từ trái nghĩa với từ "Chăm chỉ" là từ nào?',
+          optionA: 'Lười biếng (Nghiêng Trái ⬅️)',
+          optionB: 'Hiền lành (Nghiêng Phải ➡️)',
+          correctOption: 'A',
+          explanation: 'Chăm chỉ trái nghĩa với Lười biếng.'
+        },
+        {
+          id: makeId(),
+          subject: 'vietnamese',
+          question: 'Biện pháp tu từ trong câu: "Trăng tròn như quả bóng" là gì?',
+          optionA: 'Nhân hóa (Nghiêng Trái ⬅️)',
+          optionB: 'So sánh (Nghiêng Phải ➡️)',
+          correctOption: 'B',
+          explanation: 'Từ "như" dùng để đối chiếu hai sự vật tương đồng (Trăng và quả bóng), đây là phép So sánh.'
+        },
+        {
+          id: makeId(),
+          subject: 'vietnamese',
+          question: 'Dấu câu nào dùng để kết thúc một câu hỏi?',
+          optionA: 'Dấu chấm hỏi "?" (Nghiêng Trái ⬅️)',
+          optionB: 'Dấu chấm than "!" (Nghiêng Phải ➡️)',
+          correctOption: 'A',
+          explanation: 'Dấu chấm hỏi (?) dùng để kết thúc câu nghi vấn / câu hỏi.'
+        },
+        {
+          id: makeId(),
+          subject: 'vietnamese',
+          question: 'Từ nào sau đây là Từ láy?',
+          optionA: 'Xe đạp (Nghiêng Trái ⬅️)',
+          optionB: 'Lung linh (Nghiêng Phải ➡️)',
+          correctOption: 'B',
+          explanation: '"Lung linh" là từ láy âm đầu "l", còn "Xe đạp" là từ ghép phân loại.'
+        },
+        {
+          id: makeId(),
+          subject: 'vietnamese',
+          question: 'Tác giả bài thơ "Đoàn thuyền đánh cá" là ai?',
+          optionA: 'Huy Cận (Nghiêng Trái ⬅️)',
+          optionB: 'Xuân Diệu (Nghiêng Phải ➡️)',
+          correctOption: 'A',
+          explanation: 'Bài thơ "Đoàn thuyền đánh cá" sáng tác năm 1958 bởi nhà thơ Huy Cận.'
+        }
+      );
+    } else {
+      // General / Science / Nature / Trivia
+      pool.push(
+        {
+          id: makeId(),
+          subject: 'general',
+          question: `Chủ đề "${topic || 'Tự nhiên & Đời sống'}": Mặt trời mọc ở hướng nào?`,
+          optionA: 'Hướng Đông (Nghiêng Trái ⬅️)',
+          optionB: 'Hướng Tây (Nghiêng Phải ➡️)',
+          correctOption: 'A',
+          explanation: 'Mặt trời mọc ở hướng Đông và lặn ở hướng Tây do Trái Đất tự quay từ Tây sang Đông.'
+        },
+        {
+          id: makeId(),
+          subject: 'general',
+          question: 'Loài động vật nào được mệnh danh là chúa sơn lâm?',
+          optionA: 'Con Voi (Nghiêng Trái ⬅️)',
+          optionB: 'Con Hổ (Nghiêng Phải ➡️)',
+          correctOption: 'B',
+          explanation: 'Con Hổ (Cọp) được tôn vinh là chúa sơn lâm vì sức mạnh và uy quyền nơi rừng rậm.'
+        },
+        {
+          id: makeId(),
+          subject: 'general',
+          question: 'Thủ đô của nước Cộng hòa Xã hội Chủ nghĩa Việt Nam là thành phố nào?',
+          optionA: 'Hà Nội (Nghiêng Trái ⬅️)',
+          optionB: 'TP. Hồ Chí Minh (Nghiêng Phải ➡️)',
+          correctOption: 'A',
+          explanation: 'Thủ đô của nước ta là Hà Nội, trung tâm chính trị văn hóa ngàn năm văn hiến.'
+        },
+        {
+          id: makeId(),
+          subject: 'general',
+          question: 'Cây xanh quang hợp hấp thụ khí CO₂ và nhả ra khí gì cho con người hô hấp?',
+          optionA: 'Khí Nitơ (Nghiêng Trái ⬅️)',
+          optionB: 'Khí Ô-xi (Nghiêng Phải ➡️)',
+          correctOption: 'B',
+          explanation: 'Khi quang hợp dưới ánh sáng mặt trời, lá cây hấp thụ khí CO₂ và giải phóng khí O₂ (Ô-xi).'
+        },
+        {
+          id: makeId(),
+          subject: 'general',
+          question: 'Một năm thông thường (không nhuận) có bao nhiêu ngày?',
+          optionA: '365 ngày (Nghiêng Trái ⬅️)',
+          optionB: '366 ngày (Nghiêng Phải ➡️)',
+          correctOption: 'A',
+          explanation: 'Năm thường có 365 ngày, còn năm nhuận (tháng 2 có 29 ngày) có 366 ngày.'
+        },
+        {
+          id: makeId(),
+          subject: 'general',
+          question: 'Nước đá đông tụ ở nhiệt độ nào dưới áp suất tiêu chuẩn?',
+          optionA: '0°C (Nghiêng Trái ⬅️)',
+          optionB: '100°C (Nghiêng Phải ➡️)',
+          correctOption: 'A',
+          explanation: 'Nước tinh khiết đóng băng thành nước đá ở 0°C và sôi bốc hơi ở 100°C.'
+        },
+        {
+          id: makeId(),
+          subject: 'general',
+          question: 'Cầu vồng sau cơn mưa thường có bao nhiêu màu sắc cơ bản?',
+          optionA: '5 màu (Nghiêng Trái ⬅️)',
+          optionB: '7 màu (Nghiêng Phải ➡️)',
+          correctOption: 'B',
+          explanation: 'Cầu vồng gồm 7 dải màu cơ bản: Đỏ, Cam, Vàng, Lục, Lam, Chàm, Tím.'
+        },
+        {
+          id: makeId(),
+          subject: 'general',
+          question: 'Hành tinh nào gần Mặt Trời nhất trong Hệ Mặt Trời?',
+          optionA: 'Sao Thủy (Nghiêng Trái ⬅️)',
+          optionB: 'Sao Hỏa (Nghiêng Phải ➡️)',
+          correctOption: 'A',
+          explanation: 'Sao Thủy (Mercury) là hành tinh nằm gần Mặt Trời nhất trong Hệ Mặt Trời.'
+        }
+      );
+    }
+
+    const shuffled = [...pool].sort(() => 0.5 - Math.random());
+    return shuffled.slice(0, Math.min(count, pool.length));
+  }
+
+  // Gemini API Route specifically for Head-Tilt / Body Motion Game (2-choice questions)
+  app.post('/api/gemini/generate-tilt-questions', async (req, res) => {
+    const { topic, subject, grade, count = 8, difficulty } = req.body;
+    try {
+      if (!topic || topic.trim().length === 0) {
+        return res.status(400).json({ error: "Vui lòng nhập chủ đề câu hỏi." });
+      }
+
+      const prompt = `Bạn là một chuyên gia Sư phạm và Thiết kế trò chơi giáo dục tương tác vận động.
+Nhiệm vụ: Hãy tạo đúng ${count} câu hỏi trắc nghiệm ĐÚNG 2 LỰA CHỌN (A hoặc B) cho trò chơi tương tác vận động qua Camera AI: "Nghiêng người sang TRÁI chọn Đáp án [A] hoặc Nghiêng người sang PHẢI chọn Đáp án [B]".
+
+THÔNG TIN BÀI HỌC:
+- Chủ đề bài học: "${topic}"
+- Môn học: ${subject || 'Tổng hợp (Toán, Tiếng Việt, Tiếng Anh, Khoa học)'}
+- Đối tượng học sinh: ${grade ? (grade === 'thcs' ? 'Khối THCS (Lớp 6-9)' : `Lớp ${grade} Tiểu học`) : 'Học sinh Tiểu học'}
+- Mức độ khó: ${difficulty || 'Vừa phải, phù hợp lứa tuổi'}
+
+QUY TẮC BẮT BUỘC CHO TRÒ CHƠI NGHIÊNG NGƯỜI:
+1. Mỗi câu hỏi BẮT BUỘC chỉ có đúng 2 phương án: optionA (Trái ⬅️) và optionB (Phải ➡️).
+2. Dạng câu hỏi phong phú, kích thích tư duy nhanh:
+   - Dạng Đúng / Sai (Ví dụ: "Số 23 là số nguyên tố đúng hay sai? - A: Đúng, B: Sai")
+   - Dạng Lựa chọn 1 trong 2 đáp án đối chiếu (Ví dụ: "She ___ to school. - A: goes, B: go")
+   - Dạng So sánh / Phân loại (Ví dụ: "Từ nào là Danh từ? - A: Chạy, B: Bông hoa")
+   - Dạng Toán nhẩm / Câu đố tư duy logic nhanh
+3. Phân bố đáp án đúng: Hãy chia đều số lượng đáp án đúng là "A" và "B" (khoảng 50% A và 50% B) để trò chơi vận động hai bên cân đối.
+4. Lời giải thích (explanation) ngắn gọn (1-2 câu), vui vẻ, dễ hiểu, có lời khen khích lệ.
+5. Chỉ tạo các câu hỏi bám sát chủ đề "${topic}".`;
+
+      const response = await generateContentWithRetry({
+        model: "gemini-3.1-flash-lite",
+        contents: [ { role: 'user', parts: [ { text: prompt } ] } ],
+        config: {
+          temperature: 0.5,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                id: { type: Type.STRING },
+                subject: { type: Type.STRING, enum: ["math", "vietnamese", "english", "general"] },
+                question: { type: Type.STRING },
+                optionA: { type: Type.STRING, description: "Nội dung đáp án A (bên Trái)" },
+                optionB: { type: Type.STRING, description: "Nội dung đáp án B (bên Phải)" },
+                correctOption: { type: Type.STRING, enum: ["A", "B"] },
+                explanation: { type: Type.STRING }
+              },
+              required: ["id", "subject", "question", "optionA", "optionB", "correctOption", "explanation"]
+            }
+          }
+        }
+      });
+
+      if (!response.text) {
+        throw new Error("Không nhận được dữ liệu từ AI.");
+      }
+
+      let generated = JSON.parse(response.text.trim());
+      if (Array.isArray(generated) && generated.length > 0) {
+        const cleaned = generated.map((q: any, idx: number) => ({
+          id: q.id || `tilt_ai_${idx}_${Date.now()}`,
+          subject: q.subject || 'general',
+          question: q.question,
+          optionA: q.optionA,
+          optionB: q.optionB,
+          correctOption: q.correctOption === 'B' ? 'B' : 'A',
+          explanation: q.explanation || ''
+        }));
+        return res.json(cleaned);
+      } else {
+        throw new Error("Định dạng dữ liệu câu hỏi không hợp lệ.");
+      }
+    } catch (error: any) {
+      console.warn("Error in generate-tilt-questions route, falling back to local generator:", error);
+      const fallback = generateLocalTiltQuestions(topic, subject, grade, count);
+      return res.json(fallback);
+    }
+  });
+
   // Gemini API Route to generate questions from manual content
   app.post('/api/gemini/generate-questions-from-content', async (req, res) => {
     try {
-      const { subject, content, count, customInstructions, difficulty } = req.body;
+      const { subject, content, count, customInstructions, difficulty, englishPercent } = req.body;
       const prompt = getGradeAndSubjectPrompt({
         subject,
         count,
         customInstructions,
         difficulty,
-        content
+        content,
+        englishPercent
       });
 
       const questions = await callGeminiOnServer([ { role: 'user', parts: [ { text: prompt } ] } ]);
@@ -1486,9 +1932,9 @@ Ngôn ngữ: Tiếng Việt.`;
     } catch (error: any) {
       console.warn("Error generating questions from content, falling back to local generator:", error);
       try {
-        const { subject, content, count, difficulty } = req.body;
+        const { subject, content, count, difficulty, englishPercent } = req.body;
         const topicClue = content && typeof content === 'string' ? content.substring(0, 100) : "tài liệu";
-        const fallback = generateLocalQuestions(subject, topicClue, count, difficulty);
+        const fallback = generateLocalQuestions(subject, topicClue, count, difficulty, englishPercent);
         res.json(fallback);
       } catch (innerErr) {
         res.status(500).json({ error: handleGeminiError(error) });
@@ -1499,13 +1945,14 @@ Ngôn ngữ: Tiếng Việt.`;
   // Gemini API Route to generate questions from files parts (image/pdf base64 or docx/xlsx text)
   app.post('/api/gemini/generate-questions-from-parts', async (req, res) => {
     try {
-      const { subject, parts, count, customInstructions, difficulty } = req.body;
+      const { subject, parts, count, customInstructions, difficulty, englishPercent } = req.body;
       const prompt = getGradeAndSubjectPrompt({
         subject,
         count,
         customInstructions,
         difficulty,
-        hasParts: true
+        hasParts: true,
+        englishPercent
       });
 
       const contentsArray = [{ role: 'user', parts: [{ text: prompt }, ...parts] }];
@@ -1514,7 +1961,7 @@ Ngôn ngữ: Tiếng Việt.`;
     } catch (error: any) {
       console.warn("Error generating questions from parts, falling back to local generator:", error);
       try {
-        const { subject, parts, count, difficulty } = req.body;
+        const { subject, parts, count, difficulty, englishPercent } = req.body;
         let topicClue = "tài liệu đính kèm";
         if (parts && Array.isArray(parts)) {
           const textPart = parts.find((p: any) => p && typeof p.text === 'string');
@@ -1522,7 +1969,7 @@ Ngôn ngữ: Tiếng Việt.`;
             topicClue = textPart.text.substring(0, 100);
           }
         }
-        const fallback = generateLocalQuestions(subject, topicClue, count, difficulty);
+        const fallback = generateLocalQuestions(subject, topicClue, count, difficulty, englishPercent);
         res.json(fallback);
       } catch (innerErr) {
         res.status(500).json({ error: handleGeminiError(error) });

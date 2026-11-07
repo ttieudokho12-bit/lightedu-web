@@ -31,7 +31,7 @@ import studentSidebarIllustrationJpg from '../assets/images/student_laptop_sideb
 
 interface StudentDashboardProps {
   userProfile: UserProfile;
-  onSelectSubject: (subject: Subject, topic?: string, count?: number, difficulty?: string) => void;
+  onSelectSubject: (subject: Subject, topic?: string, count?: number, difficulty?: string, englishPercent?: number) => void;
   onSelectAssignment: (assignment: Assignment) => void;
   onViewHistory: () => void;
 }
@@ -860,6 +860,18 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
   const [showAllTopics, setShowAllTopics] = useState<boolean>(false);
   const [selectedExamQuestionCount, setSelectedExamQuestionCount] = useState<number>(10);
   const [selectedExamDifficulty, setSelectedExamDifficulty] = useState<string>('All');
+  const isEnglishExamSubject = Boolean(
+    selectedExamSubject?.includes('Tiếng Anh') || selectedExamSubject?.toLowerCase().includes('english')
+  );
+  const [selectedEnglishPercent, setSelectedEnglishPercent] = useState<number>(() => {
+    return selectedExamSubject?.includes('Tiếng Anh') ? 100 : 0;
+  });
+
+  useEffect(() => {
+    if (isEnglishExamSubject) {
+      setSelectedEnglishPercent(100);
+    }
+  }, [isEnglishExamSubject]);
   const [showTeacherAssignments, setShowTeacherAssignments] = useState<boolean>(false);
   const [studyAdvice, setStudyAdvice] = useState<string>('');
   const [isAdviceLoading, setIsAdviceLoading] = useState<boolean>(false);
@@ -1015,7 +1027,8 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
   }, [userProfile.uid]);
 
   const handleStartSelfQuiz = () => {
-    onSelectSubject(selectedExamSubject, selectedExamTopic, selectedExamQuestionCount, selectedExamDifficulty);
+    const finalEnglishPercent = isEnglishExamSubject ? 100 : selectedEnglishPercent;
+    onSelectSubject(selectedExamSubject, selectedExamTopic, selectedExamQuestionCount, selectedExamDifficulty, finalEnglishPercent);
   };
 
   const handleJoinClass = async () => {
@@ -2720,6 +2733,74 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                             })}
                           </div>
                         </div>
+
+                        {/* English Questions Percentage Selector (0% to 100%) - CHỈ HIỂN THỊ VỚI MÔN TOÁN & TIẾNG VIỆT */}
+                        {!isEnglishExamSubject && (
+                          <div className="space-y-3 pt-2 border-t border-stone-100">
+                            <div className="flex items-center justify-between">
+                              <label className="text-xs font-black text-stone-700 flex items-center gap-1.5">
+                                <Languages className="w-4 h-4 text-indigo-600" />
+                                <span>Tỉ lệ câu hỏi Tiếng Anh (Song ngữ):</span>
+                              </label>
+                              <span className="text-xs font-black px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                {selectedEnglishPercent}% Tiếng Anh {selectedEnglishPercent === 0 ? '(100% Tiếng Việt)' : ''}
+                              </span>
+                            </div>
+
+                            {/* Quick selection grid: 0% to 100% */}
+                            <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-11 gap-1.5">
+                              {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((pct) => {
+                                const isPctSelected = selectedEnglishPercent === pct;
+                                return (
+                                  <button
+                                    key={pct}
+                                    type="button"
+                                    onClick={() => setSelectedEnglishPercent(pct)}
+                                    className={`py-2 px-1 rounded-xl border-2 text-center transition-all duration-150 text-xs font-black cursor-pointer ${
+                                      isPctSelected
+                                        ? 'bg-indigo-600 border-indigo-600 text-white shadow-sm ring-2 ring-indigo-500/20 scale-[1.03]'
+                                        : 'border-stone-100 bg-stone-50/50 text-stone-600 hover:bg-stone-100/80 hover:border-stone-200'
+                                    }`}
+                                  >
+                                    {pct}%
+                                  </button>
+                                );
+                              })}
+                            </div>
+
+                            {/* Interactive slider with real-time question preview */}
+                            <div className="bg-indigo-50/50 border border-indigo-100/70 p-3.5 rounded-2xl space-y-2.5">
+                              <div className="flex items-center justify-between text-[11px] font-bold text-stone-500">
+                                <span className="text-stone-600">0% (Thuần Việt)</span>
+                                <span className="text-indigo-600 font-extrabold">50% (Song ngữ)</span>
+                                <span className="text-indigo-800 font-extrabold">100% (Hoàn toàn TA)</span>
+                              </div>
+                              <input
+                                type="range"
+                                min="0"
+                                max="100"
+                                step="10"
+                                value={selectedEnglishPercent}
+                                onChange={(e) => setSelectedEnglishPercent(Number(e.target.value))}
+                                className="w-full accent-indigo-600 cursor-pointer h-2 bg-stone-200 rounded-lg"
+                              />
+                              <div className="flex items-center justify-between text-[11px] pt-0.5">
+                                <span className="font-extrabold text-indigo-700 flex items-center gap-1">
+                                  <span>🎯 Dự kiến:</span>
+                                  <strong>{Math.round(selectedExamQuestionCount * (selectedEnglishPercent / 100))} câu Tiếng Anh</strong>
+                                  <span className="text-stone-400">/ {selectedExamQuestionCount} câu</span>
+                                </span>
+                                <span className="text-[10px] text-stone-500 font-semibold">
+                                  {selectedEnglishPercent === 0
+                                    ? '100% câu hỏi bằng Tiếng Việt (Thuần Tiếng Việt)'
+                                    : selectedEnglishPercent === 100
+                                      ? '100% câu hỏi bằng Tiếng Anh'
+                                      : `${selectedExamQuestionCount - Math.round(selectedExamQuestionCount * (selectedEnglishPercent / 100))} câu Tiếng Việt`}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
 
                         {/* Supporting encouragement card */}
                         <div className="bg-amber-50/50 border border-amber-100/50 p-4 rounded-2xl flex items-start gap-2.5">

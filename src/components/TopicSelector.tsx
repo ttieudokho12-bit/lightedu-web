@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { ArrowLeft, Send, Sparkles, ChevronRight, Home } from 'lucide-react';
+import { ArrowLeft, Send, Sparkles, ChevronRight, Home, Languages } from 'lucide-react';
 import { Subject, PREDEFINED_TOPICS, UserProfile } from '../types';
 import { db } from '../firebase';
 import { doc, getDoc, collection, getDocs, query, where, onSnapshot } from 'firebase/firestore';
@@ -10,7 +10,7 @@ interface TopicSelectorProps {
   userProfile?: UserProfile | null;
   onBack: () => void;
   onHome?: () => void;
-  onStartQuiz: (topic: string, count: number, difficulty?: string) => void;
+  onStartQuiz: (topic: string, count: number, difficulty?: string, englishPercent?: number) => void;
 }
 
 export default function TopicSelector({ subject, userProfile, onBack, onHome, onStartQuiz }: TopicSelectorProps) {
@@ -18,6 +18,7 @@ export default function TopicSelector({ subject, userProfile, onBack, onHome, on
   const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
   const [questionCount, setQuestionCount] = useState(10);
   const [difficulty, setDifficulty] = useState('All');
+  const [englishPercent, setEnglishPercent] = useState<number>(() => subject.startsWith('Tiếng Anh') ? 100 : 0);
   const [classCustomTopics, setClassCustomTopics] = useState<string[]>([]);
   const [isLoadingCustom, setIsLoadingCustom] = useState(false);
   const [userResults, setUserResults] = useState<any[]>([]);
@@ -124,7 +125,7 @@ export default function TopicSelector({ subject, userProfile, onBack, onHome, on
   const handleStart = () => {
     const topic = selectedTopic || customTopic;
     if (topic) {
-      onStartQuiz(topic, questionCount, difficulty);
+      onStartQuiz(topic, questionCount, difficulty, isEnglish ? 100 : englishPercent);
     }
   };
 
@@ -312,6 +313,69 @@ export default function TopicSelector({ subject, userProfile, onBack, onHome, on
               ))}
             </div>
           </section>
+
+          {/* English Questions Percentage Selector (0% to 100%) - CHỈ HIỂN THỊ VỚI MÔN TOÁN & TIẾNG VIỆT */}
+          {!isEnglish && (
+            <section className="space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="w-1 h-4 bg-indigo-500 rounded-full"></div>
+                  <p className="text-xs font-mono uppercase tracking-widest text-stone-400 font-bold flex items-center gap-1.5">
+                    <Languages className="w-4 h-4 text-indigo-500" />
+                    Tỉ lệ câu hỏi Tiếng Anh (Song ngữ)
+                  </p>
+                </div>
+                <span className="text-xs font-bold px-3 py-1 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+                  {englishPercent}% Tiếng Anh {englishPercent === 0 ? '(100% Tiếng Việt)' : ''}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-11 gap-1.5">
+                {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((pct) => (
+                  <button
+                    key={pct}
+                    type="button"
+                    onClick={() => setEnglishPercent(pct)}
+                    className={`py-2 rounded-xl border-2 font-bold transition-all text-xs cursor-pointer ${
+                      englishPercent === pct
+                        ? 'bg-indigo-600 border-indigo-600 text-white shadow-md scale-105'
+                        : 'bg-white border-stone-100 text-stone-600 hover:border-stone-200'
+                    }`}
+                  >
+                    {pct}%
+                  </button>
+                ))}
+              </div>
+
+              <div className="bg-indigo-50/50 border border-indigo-100 p-3.5 rounded-2xl space-y-2">
+                <div className="flex items-center justify-between text-[11px] font-bold text-stone-500">
+                  <span className="text-stone-600">0% (Thuần Việt)</span>
+                  <span className="text-indigo-600 font-extrabold">50% (Song ngữ)</span>
+                  <span className="text-indigo-800 font-extrabold">100% (Hoàn toàn TA)</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="10"
+                  value={englishPercent}
+                  onChange={(e) => setEnglishPercent(Number(e.target.value))}
+                  className="w-full accent-indigo-600 cursor-pointer h-2 bg-stone-200 rounded-lg"
+                />
+                <div className="flex items-center justify-between text-xs text-indigo-900 font-medium">
+                  <span>
+                    🎯 Dự kiến: <strong>{Math.round(questionCount * (englishPercent / 100))} câu Tiếng Anh</strong>
+                    {englishPercent === 0 && <span className="text-emerald-600 ml-1 font-bold">(Thuần Tiếng Việt)</span>}
+                  </span>
+                  <span className="text-stone-500">
+                    {englishPercent === 0
+                      ? '100% câu hỏi bằng Tiếng Việt'
+                      : `${questionCount - Math.round(questionCount * (englishPercent / 100))} câu Tiếng Việt`}
+                  </span>
+                </div>
+              </div>
+            </section>
+          )}
 
           {/* Start Button */}
           <button

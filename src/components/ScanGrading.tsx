@@ -392,22 +392,26 @@ export const ScanGrading: React.FC<ScanGradingProps> = ({ classes }) => {
   const startCameraStream = async () => {
     setCameraErrorMsg(null);
     try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      if (navigator?.mediaDevices?.getUserMedia) {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
         });
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          videoRef.current.play();
+          await videoRef.current.play().catch(() => {});
           setWebcamActive(true);
         }
       } else {
-        setCameraErrorMsg("Trình duyệt không hỗ trợ truy cập Camera trực tiếp.");
+        setCameraErrorMsg("Trình duyệt không hỗ trợ truy cập Camera trực tiếp. Hệ thống sẽ sử dụng Chế độ Quét Mã AI giả lập.");
         setWebcamActive(false);
       }
     } catch (err: any) {
-      console.warn("Camera stream access error:", err);
-      setCameraErrorMsg(err?.message || "Không thể mở Camera (chưa cấp quyền hoặc iFrame hạn chế). System sử dụng Chế độ Quét Mã AI giả lập.");
+      console.warn("Camera stream access unavailable or permission denied:", err?.name || err?.message || err);
+      if (err?.name === 'NotAllowedError' || err?.message?.includes('Permission denied')) {
+        setCameraErrorMsg("Quyền truy cập Camera bị từ chối hoặc bị hạn chế bởi trình duyệt/iFrame. Hệ thống tự động kích hoạt Chế độ Quét Mã AI giả lập.");
+      } else {
+        setCameraErrorMsg("Không thể mở Camera trực tiếp. Hệ thống sử dụng Chế độ Quét Mã AI giả lập.");
+      }
       setWebcamActive(false);
     }
   };

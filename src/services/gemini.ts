@@ -2,14 +2,14 @@ import { Question, Subject } from "../types";
 import * as mammoth from "mammoth";
 import * as XLSX from "xlsx";
 
-export async function generateQuestions(subject: Subject, topic: string, count: number, customInstructions?: string, difficulty?: string): Promise<Question[]> {
+export async function generateQuestions(subject: Subject, topic: string, count: number, customInstructions?: string, difficulty?: string, englishPercent?: number): Promise<Question[]> {
   try {
     const response = await fetch('/api/gemini/generate-questions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ subject, topic, count, customInstructions, difficulty }),
+      body: JSON.stringify({ subject, topic, count, customInstructions, difficulty, englishPercent }),
     });
     
     if (!response.ok) {
@@ -24,14 +24,52 @@ export async function generateQuestions(subject: Subject, topic: string, count: 
   }
 }
 
-export async function generateQuestionsFromContent(subject: Subject, content: string, count: number, customInstructions?: string, difficulty?: string): Promise<Question[]> {
+export interface TiltQuestionItem {
+  id: string;
+  subject: 'math' | 'vietnamese' | 'english' | 'general';
+  question: string;
+  optionA: string;
+  optionB: string;
+  correctOption: 'A' | 'B';
+  explanation?: string;
+}
+
+export async function generateTiltQuestions(params: {
+  topic: string;
+  subject?: string;
+  grade?: string;
+  count?: number;
+  difficulty?: string;
+}): Promise<TiltQuestionItem[]> {
+  try {
+    const response = await fetch('/api/gemini/generate-tilt-questions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(params),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(errorData.error || "Không thể tạo bộ câu hỏi nghiêng người. Vui lòng thử lại.");
+    }
+
+    return await response.json();
+  } catch (error: any) {
+    console.error("Error in generateTiltQuestions:", error);
+    throw new Error(error.message || "Không thể kết nối tới máy chủ.");
+  }
+}
+
+export async function generateQuestionsFromContent(subject: Subject, content: string, count: number, customInstructions?: string, difficulty?: string, englishPercent?: number): Promise<Question[]> {
   try {
     const response = await fetch('/api/gemini/generate-questions-from-content', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ subject, content, count, customInstructions, difficulty }),
+      body: JSON.stringify({ subject, content, count, customInstructions, difficulty, englishPercent }),
     });
     
     if (!response.ok) {
@@ -46,7 +84,7 @@ export async function generateQuestionsFromContent(subject: Subject, content: st
   }
 }
 
-export async function generateQuestionsFromFiles(subject: Subject, files: File[], count: number, customInstructions?: string, difficulty?: string): Promise<Question[]> {
+export async function generateQuestionsFromFiles(subject: Subject, files: File[], count: number, customInstructions?: string, difficulty?: string, englishPercent?: number): Promise<Question[]> {
   const parts: any[] = [];
 
   for (const file of files) {
@@ -170,7 +208,7 @@ export async function generateQuestionsFromFiles(subject: Subject, files: File[]
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ subject, parts, count, customInstructions, difficulty }),
+      body: JSON.stringify({ subject, parts, count, customInstructions, difficulty, englishPercent }),
     });
     
     if (!response.ok) {

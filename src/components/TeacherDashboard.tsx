@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, Users, Send, BookOpen, Trash2, CheckCircle, CheckCircle2, Loader2, Sparkles, FileText, BarChart3, ChevronRight, User, Clock, Award, BrainCircuit, X, Library, Upload, FileUp, Download, CheckSquare, Square, Eye, Copy, HelpCircle, Home, Volume2, Mic, Play, Languages, Camera, Folder, Target, Pencil, Key, Search, Bot, ScanLine, QrCode } from 'lucide-react';
+import { Plus, Users, Send, BookOpen, Trash2, CheckCircle, CheckCircle2, Loader2, Sparkles, FileText, BarChart3, ChevronRight, User, Clock, Award, BrainCircuit, X, Library, Upload, FileUp, Download, CheckSquare, Square, Eye, Copy, HelpCircle, Home, Volume2, Mic, Play, Languages, Camera, Folder, Target, Pencil, Key, Search, Bot, ScanLine, QrCode, Gamepad2 } from 'lucide-react';
 import { db, auth, serverTimestamp, handleFirestoreError, OperationType, parseDate } from '../firebase';
 import { collection, addDoc, query, where, onSnapshot, deleteDoc, doc, getDocs, orderBy, writeBatch } from 'firebase/firestore';
 import { ClassRoom, Subject, SUBJECTS, Question, Assignment, QuizResult, PronunciationResult, UserProfile, QuizTemplate, PREDEFINED_TOPICS } from '../types';
@@ -15,8 +15,9 @@ import { VocabularyIllustration } from './VocabularyIllustration';
 import { SpeakingPractice } from './SpeakingPractice';
 import Quiz from './Quiz';
 import ScanGrading from './ScanGrading';
+import TeacherEducationalGames from './TeacherEducationalGames';
 
-type TeacherTab = 'CLASSES' | 'CREATE_QUIZ' | 'LIBRARY' | 'STUDENTS' | 'RESULTS' | 'SCAN_GRADING';
+type TeacherTab = 'CLASSES' | 'CREATE_QUIZ' | 'LIBRARY' | 'STUDENTS' | 'RESULTS' | 'GAMES' | 'SCAN_GRADING';
 
 interface TeacherDashboardProps {
   userProfile?: UserProfile | null;
@@ -99,6 +100,19 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
   }, [teacherAllowedSubjects]);
   const [questionCount, setQuestionCount] = useState(10);
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>('All');
+  const isEnglishSubject = Boolean(
+    selectedSubject?.toLowerCase().includes('anh') || selectedSubject?.toLowerCase().includes('english')
+  );
+  const [englishPercent, setEnglishPercent] = useState<number>(() => {
+    return (selectedSubject?.toLowerCase().includes('anh') || selectedSubject?.toLowerCase().includes('english')) ? 100 : 0;
+  });
+
+  useEffect(() => {
+    if (isEnglishSubject) {
+      setEnglishPercent(100);
+    }
+  }, [isEnglishSubject]);
+
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedQuestions, setGeneratedQuestions] = useState<Question[]>([]);
   const [assignmentTitle, setAssignmentTitle] = useState('');
@@ -345,6 +359,10 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
     setCameraError(null);
     setIsCameraOpen(true);
     try {
+      if (!navigator?.mediaDevices?.getUserMedia) {
+        setCameraError('Trình duyệt không hỗ trợ mở camera trực tiếp. Vui lòng nhấn "Dùng máy ảnh thiết bị" bên dưới hoặc chọn ảnh có sẵn.');
+        return;
+      }
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }
       });
@@ -353,8 +371,12 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
         videoRef.current.srcObject = mediaStream;
       }
     } catch (err: any) {
-      console.error('Camera access error:', err);
-      setCameraError('Không thể mở camera tự động. Vui lòng cấp quyền truy cập camera hoặc nhấn "Mở camera thiết bị" bên dưới.');
+      console.warn('Camera access unavailable or permission denied:', err?.name || err?.message || err);
+      if (err?.name === 'NotAllowedError' || err?.message?.includes('Permission denied')) {
+        setCameraError('Quyền truy cập Camera bị từ chối hoặc bị hạn chế bởi trình duyệt/iFrame. Thầy cô vui lòng nhấn nút "Dùng máy ảnh thiết bị" bên dưới hoặc tải ảnh có sẵn.');
+      } else {
+        setCameraError('Không thể mở camera tự động. Thầy cô có thể nhấn "Dùng máy ảnh thiết bị" bên dưới hoặc chọn ảnh từ máy.');
+      }
     }
   };
 
@@ -410,12 +432,13 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
     setIsGenerating(true);
     try {
       let questions: Question[];
+      const effectiveEnglishPercent = isEnglishSubject ? 100 : englishPercent;
       if (creationMode === 'topic') {
-        questions = await generateQuestions(selectedSubject, topic, questionCount, customInstructions, selectedDifficulty);
+        questions = await generateQuestions(selectedSubject, topic, questionCount, customInstructions, selectedDifficulty, effectiveEnglishPercent);
       } else if (creationMode === 'content') {
-        questions = await generateQuestionsFromContent(selectedSubject, manualContent, questionCount, customInstructions, selectedDifficulty);
+        questions = await generateQuestionsFromContent(selectedSubject, manualContent, questionCount, customInstructions, selectedDifficulty, effectiveEnglishPercent);
       } else {
-        questions = await generateQuestionsFromFiles(selectedSubject, uploadedFiles, questionCount, customInstructions, selectedDifficulty);
+        questions = await generateQuestionsFromFiles(selectedSubject, uploadedFiles, questionCount, customInstructions, selectedDifficulty, effectiveEnglishPercent);
       }
       setGeneratedQuestions(questions);
       
@@ -812,6 +835,17 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
             Kết quả học tập
           </button>
           <button 
+            onClick={() => setActiveTab('GAMES')}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-xs md:text-sm font-semibold transition-all whitespace-nowrap ${
+              activeTab === 'GAMES' 
+                ? 'bg-amber-500 text-white shadow-md shadow-amber-500/20' 
+                : 'text-stone-600 hover:text-stone-900'
+            }`}
+          >
+            <Gamepad2 className="w-4 h-4 text-amber-500" />
+            Trò chơi học tập
+          </button>
+          <button 
             onClick={() => setActiveTab('SCAN_GRADING')}
             className={`flex items-center gap-2 px-5 py-2.5 rounded-full text-xs md:text-sm font-semibold transition-all whitespace-nowrap ${
               activeTab === 'SCAN_GRADING' 
@@ -1083,6 +1117,76 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                   </p>
                 </div>
               </div>
+
+              {/* TỈ LỆ CÂU HỎI TIẾNG ANH (SONG NGỮ) - CHỈ HIỂN THỊ VỚI MÔN TOÁN & TIẾNG VIỆT */}
+              {!isEnglishSubject && (
+                <div className="bg-white border border-stone-200/90 rounded-2xl p-5 space-y-4 shadow-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
+                        <Languages className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <span className="text-xs font-bold uppercase tracking-wider text-stone-800">TỈ LỆ CÂU HỎI TIẾNG ANH (SONG NGỮ)</span>
+                        <p className="text-[11px] text-stone-500">Tùy chỉnh tỷ lệ câu hỏi song ngữ hoặc tiếng Anh trong đề thi tự động</p>
+                      </div>
+                    </div>
+                    <span className="text-xs font-bold px-3 py-1 rounded-full bg-emerald-50 text-[#00A66C] border border-emerald-200">
+                      {englishPercent}% Tiếng Anh {englishPercent === 0 ? '(100% Tiếng Việt)' : ''}
+                    </span>
+                  </div>
+
+                  {/* Quick Selection Buttons (0% to 100%) */}
+                  <div className="grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-11 gap-1.5">
+                    {[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].map((pct) => (
+                      <button
+                        key={pct}
+                        type="button"
+                        onClick={() => setEnglishPercent(pct)}
+                        className={`py-2 px-1 rounded-xl border text-xs font-bold transition-all cursor-pointer ${
+                          englishPercent === pct
+                            ? 'bg-[#00A66C] border-[#00A66C] text-white shadow-xs scale-[1.02]'
+                            : 'bg-stone-50 border-stone-200 text-stone-600 hover:border-emerald-300 hover:bg-emerald-50/50'
+                        }`}
+                      >
+                        {pct}%
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Range Slider & Live Count Breakdown */}
+                  <div className="bg-emerald-50/30 border border-emerald-100 rounded-xl p-3.5 space-y-2">
+                    <div className="flex items-center justify-between text-[11px] font-bold text-stone-500">
+                      <span className="text-stone-600">0% (Thuần Việt)</span>
+                      <span className="text-emerald-700 font-extrabold">50% (Song ngữ)</span>
+                      <span className="text-emerald-800 font-extrabold">100% (Hoàn toàn TA)</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="10"
+                      value={englishPercent}
+                      onChange={(e) => setEnglishPercent(Number(e.target.value))}
+                      className="w-full accent-[#00A66C] cursor-pointer h-2 bg-stone-200 rounded-lg"
+                    />
+                    <div className="flex flex-wrap items-center justify-between text-xs text-stone-700 font-medium gap-2">
+                      <span className="flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-[#00A66C]" />
+                        Dự kiến: <strong className="text-[#00A66C]">{Math.round(questionCount * (englishPercent / 100))} câu Tiếng Anh</strong>
+                        {englishPercent === 0 && <span className="text-emerald-700 font-bold ml-1">(Thuần Tiếng Việt)</span>}
+                      </span>
+                      <span className="text-stone-500">
+                        {englishPercent === 0
+                          ? '100% câu hỏi bằng Tiếng Việt'
+                          : englishPercent === 100
+                            ? '100% câu hỏi bằng Tiếng Anh'
+                            : `${questionCount - Math.round(questionCount * (englishPercent / 100))} câu Tiếng Việt (Tổng: ${questionCount} câu)`}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* CHỌN NGUỒN TÀI LIỆU */}
               <div className="space-y-4">
@@ -1928,11 +2032,28 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
         </div>
       )}
 
+      {activeTab === 'GAMES' && (
+        <TeacherEducationalGames 
+          classes={classes}
+          allStudents={allStudents}
+          assignments={assignments}
+          quizTemplates={quizTemplates}
+          currentTeacherUid={currentTeacherUid}
+          userProfile={teacherProfile}
+          onBackToDashboard={() => setActiveTab('CLASSES')}
+        />
+      )}
+
       {activeTab === 'SCAN_GRADING' && (
-        <ScanGrading 
-          classes={classes} 
-          currentTeacherUid={currentTeacherUid} 
-          userProfile={teacherProfile} 
+        <TeacherEducationalGames 
+          classes={classes}
+          allStudents={allStudents}
+          assignments={assignments}
+          quizTemplates={quizTemplates}
+          currentTeacherUid={currentTeacherUid}
+          userProfile={teacherProfile}
+          initialGame="scan"
+          onBackToDashboard={() => setActiveTab('CLASSES')}
         />
       )}
 

@@ -180,10 +180,10 @@ export default function App() {
     };
   }, []);
 
-  const handleSelectSubject = (subject: Subject, topic?: string, count?: number, difficulty?: string) => {
+  const handleSelectSubject = (subject: Subject, topic?: string, count?: number, difficulty?: string, englishPercent?: number) => {
     setSelectedSubject(subject);
     if (topic) {
-      handleStartQuiz(topic, count || 5, difficulty);
+      handleStartQuiz(topic, count || 5, difficulty, englishPercent);
     } else {
       setAppState('TOPIC_SELECTOR');
     }
@@ -197,7 +197,7 @@ export default function App() {
     setAppState('QUIZ');
   };
 
-  const handleStartQuiz = async (topic: string, count: number, difficulty?: string) => {
+  const handleStartQuiz = async (topic: string, count: number, difficulty?: string, englishPercent?: number) => {
     if (!selectedSubject) return;
     
     setSelectedTopic(topic);
@@ -206,7 +206,7 @@ export default function App() {
     setCurrentAssignmentId(null);
     
     try {
-      const generatedQuestions = await generateQuestions(selectedSubject, topic, count, undefined, difficulty);
+      const generatedQuestions = await generateQuestions(selectedSubject, topic, count, undefined, difficulty, englishPercent);
       setQuestions(generatedQuestions);
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Đã có lỗi xảy ra');
