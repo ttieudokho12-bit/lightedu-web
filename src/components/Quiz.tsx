@@ -1121,7 +1121,10 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject, 
 
               {/* Options list */}
               <div className="grid grid-cols-1 gap-4 mt-6">
-                {(Object.entries(currentQuestion.options) as [('A' | 'B' | 'C' | 'D'), string][]).map(([key, value]) => {
+                {(['A', 'B', 'C', 'D'] as const)
+                  .filter((key) => currentQuestion.options && currentQuestion.options[key] !== undefined)
+                  .map((key) => {
+                  const value = currentQuestion.options[key];
                   const isCorrect = key === currentQuestion.correctAnswer;
                   const isSelected = key === selectedAnswer;
                   
@@ -1150,7 +1153,10 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject, 
                       className={`group flex items-center gap-5 p-5 rounded-2xl text-left transition-all font-bold text-lg md:text-xl relative overflow-visible cursor-pointer ${containerClass}`}
                     >
                       {/* Option letter badge */}
-                      <span className={`w-11 h-11 flex-shrink-0 flex items-center justify-center rounded-full font-black text-lg border transition-all ${badgeClass}`}>
+                      <span
+                        translate="no"
+                        className={`notranslate w-11 h-11 flex-shrink-0 flex items-center justify-center rounded-full font-black text-lg border transition-all ${badgeClass}`}
+                      >
                         {key}
                       </span>
 
@@ -1302,8 +1308,14 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject, 
 
                       {/* Formula Visual Highlight Box */}
                       <div className="bg-white border border-sky-100 rounded-2xl p-4 sm:p-5 flex items-center justify-center text-center shadow-sm">
-                        <div className="text-xl sm:text-2xl font-black text-[#1e3a8a] tracking-wide flex items-center gap-1.5 flex-wrap justify-center">
-                          <span>Vậy đáp án là: </span>
+                        <div className="text-xl sm:text-2xl font-black text-[#1e3a8a] tracking-wide flex items-center gap-2 flex-wrap justify-center">
+                          <span>Vậy đáp án đúng là: </span>
+                          <span
+                            translate="no"
+                            className="notranslate inline-flex items-center justify-center w-8 h-8 rounded-full bg-rose-500 text-white text-base sm:text-lg font-black shadow-sm"
+                          >
+                            {currentQuestion.correctAnswer}
+                          </span>
                           <span className="text-rose-500 text-2xl sm:text-3xl font-black px-1.5 inline-flex items-center">
                             <Markdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
                               {formatMathSymbols(

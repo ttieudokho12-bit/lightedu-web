@@ -1802,25 +1802,25 @@ export default function TeacherDashboard({ userProfile, selectedSchoolYear: sele
                     </div>
                     <div className="grid grid-cols-2 gap-2 text-xs text-stone-500 mb-2 ml-6">
                       <div className="flex gap-2">
-                        <span className="font-bold">A.</span>
+                        <span translate="no" className="notranslate font-bold">A.</span>
                         <Markdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{formatMathSymbols(q.options.A)}</Markdown>
                       </div>
                       <div className="flex gap-2">
-                        <span className="font-bold">B.</span>
+                        <span translate="no" className="notranslate font-bold">B.</span>
                         <Markdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{formatMathSymbols(q.options.B)}</Markdown>
                       </div>
                       <div className="flex gap-2">
-                        <span className="font-bold">C.</span>
+                        <span translate="no" className="notranslate font-bold">C.</span>
                         <span className="flex-1">
                           <Markdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{formatMathSymbols(q.options.C)}</Markdown>
                         </span>
                       </div>
                       <div className="flex gap-2">
-                        <span className="font-bold">D.</span>
+                        <span translate="no" className="notranslate font-bold">D.</span>
                         <Markdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{formatMathSymbols(q.options.D)}</Markdown>
                       </div>
                     </div>
-                    <p className="text-emerald-600 text-xs font-bold ml-6">Đáp án đúng: {q.correctAnswer}</p>
+                    <p className="text-emerald-600 text-xs font-bold ml-6">Đáp án đúng: <span translate="no" className="notranslate">{q.correctAnswer}</span></p>
                   </div>
                 ))}
               </div>
@@ -2612,12 +2612,17 @@ export default function TeacherDashboard({ userProfile, selectedSchoolYear: sele
                         </div>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 ml-10">
-                        {Object.entries(q.options).map(([key, value]) => (
-                          <div key={key} className={`p-3 rounded-xl border text-sm flex gap-3 ${key === q.correctAnswer ? 'bg-emerald-50 border-emerald-200 text-emerald-700 font-bold' : 'bg-stone-50 border-stone-100 text-stone-600'}`}>
-                            <span className="opacity-50">{key}.</span>
-                            <Markdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{formatMathSymbols(value)}</Markdown>
-                          </div>
-                        ))}
+                        {(['A', 'B', 'C', 'D'] as const)
+                          .filter((key) => q.options && q.options[key] !== undefined)
+                          .map((key) => {
+                            const value = q.options[key];
+                            return (
+                              <div key={key} className={`p-3 rounded-xl border text-sm flex gap-3 ${key === q.correctAnswer ? 'bg-emerald-50 border-emerald-200 text-emerald-700 font-bold' : 'bg-stone-50 border-stone-100 text-stone-600'}`}>
+                                <span translate="no" className="notranslate opacity-50">{key}.</span>
+                                <Markdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{formatMathSymbols(value)}</Markdown>
+                              </div>
+                            );
+                          })}
                       </div>
                       <div className="mt-4 ml-10 p-4 bg-indigo-50 rounded-xl border border-indigo-100 text-xs text-indigo-700 leading-relaxed">
                         <p className="font-bold mb-1 flex items-center gap-2">
