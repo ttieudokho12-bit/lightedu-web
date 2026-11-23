@@ -594,8 +594,10 @@ export default function Login({ sharedExamInfo, sharedExamLoading, sharedExamErr
               }
             }
 
-            // Sign in locally! Save to localStorage
-            const localSession = {
+            // Sign in locally! Save full profile (without password) to localStorage
+            const { password: _ignoredPassword, ...profileWithoutPassword } = profile;
+            const localSession: UserProfile = {
+              ...profileWithoutPassword,
               uid: profile.uid,
               email: resolvedEmail,
               displayName: profile.displayName || resolvedEmail.split('@')[0],

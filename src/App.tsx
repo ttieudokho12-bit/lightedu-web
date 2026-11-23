@@ -133,6 +133,8 @@ export default function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [currentAssignmentId, setCurrentAssignmentId] = useState<string | null>(null);
   const [currentSharedTemplateId, setCurrentSharedTemplateId] = useState<string | null>(null);
+  const [currentAssignmentClassId, setCurrentAssignmentClassId] = useState<string | null>(null);
+  const [currentAssignmentSchoolYear, setCurrentAssignmentSchoolYear] = useState<string | null>(null);
   const [savedToProgress, setSavedToProgress] = useState<boolean>(false);
 
   // Fetch shared exam from assignments or quiz_templates when ?assignment= or ?exam= is present
@@ -364,39 +366,92 @@ export default function App() {
     }
   }, [loading, user, userProfile, sharedExamId]);
 
+  const normalizeExamText = (text?: string | null) =>
+    (text || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+  const resolveClassSchoolYear = async (classId?: string | null): Promise<string | null> => {
+    if (!classId) return null;
+    try {
+      const clsSnap = await getDoc(doc(db, 'classes', classId));
+      if (clsSnap.exists()) {
+        const clsData = clsSnap.data() as { schoolYear?: string };
+        return clsData.schoolYear || DEFAULT_SCHOOL_YEAR;
+      }
+    } catch (err) {
+      console.warn('Could not resolve class schoolYear:', err);
+    }
+    return null;
+  };
+
   const handleStartSharedExam = async () => {
     if (!sharedExamTemplate) return;
     const resolvedId = sharedExamTemplate.id || sharedExamId;
     setSelectedSubject(sharedExamTemplate.subject);
     setSelectedTopic(sharedExamTemplate.title);
     setQuestions(sharedExamTemplate.questions);
+
     if (sharedExamResolvedSource === 'assignment') {
       const assignmentData = sharedExamTemplate as unknown as Assignment;
+      const targetClassId = assignmentData.classId || userProfile?.classId || null;
+      const resolvedYear =
+        assignmentData.schoolYear ||
+        (await resolveClassSchoolYear(targetClassId)) ||
+        userProfile?.schoolYear ||
+        selectedSchoolYear;
       setCurrentAssignmentId(resolvedId);
       setCurrentSharedTemplateId(assignmentData.templateId || null);
+      setCurrentAssignmentClassId(targetClassId);
+      setCurrentAssignmentSchoolYear(resolvedYear);
     } else {
       setCurrentSharedTemplateId(resolvedId);
       let matchedAssignmentId: string | null = null;
+      let matchedClassId: string | null = userProfile?.classId || null;
+      let matchedSchoolYear: string | null = null;
+
       if (userProfile?.classId && resolvedId) {
         try {
           const snap = await getDocs(
             query(collection(db, 'assignments'), where('classId', '==', userProfile.classId))
           );
-          const matched = snap.docs.find((d) => {
+          const normTitle = normalizeExamText(sharedExamTemplate.title);
+          const normSubject = normalizeExamText(sharedExamTemplate.subject);
+
+          const matchingDocs = snap.docs.filter((d) => {
             const data = d.data() as Assignment;
             return (
               data.templateId === resolvedId ||
-              (data.title === sharedExamTemplate.title && data.subject === sharedExamTemplate.subject)
+              (normalizeExamText(data.title) === normTitle &&
+                normalizeExamText(data.subject) === normSubject)
             );
           });
-          if (matched) {
-            matchedAssignmentId = matched.id;
+
+          if (matchingDocs.length > 0) {
+            // Prefer assignment in the currently selected schoolYear, else most recently created
+            const preferred =
+              matchingDocs.find((d) => (d.data() as Assignment).schoolYear === selectedSchoolYear) ||
+              matchingDocs.sort((a, b) => {
+                const ta = (a.data() as any).createdAt?.toMillis?.() || 0;
+                const tb = (b.data() as any).createdAt?.toMillis?.() || 0;
+                return tb - ta;
+              })[0];
+
+            const matchedData = preferred.data() as Assignment;
+            matchedAssignmentId = preferred.id;
+            matchedClassId = matchedData.classId || userProfile.classId;
+            matchedSchoolYear =
+              matchedData.schoolYear ||
+              (await resolveClassSchoolYear(matchedClassId)) ||
+              userProfile.schoolYear ||
+              DEFAULT_SCHOOL_YEAR;
           }
         } catch (err) {
           console.warn('Could not match class assignment for shared template:', err);
         }
       }
+
       setCurrentAssignmentId(matchedAssignmentId || `template_${resolvedId}`);
+      setCurrentAssignmentClassId(matchedClassId);
+      setCurrentAssignmentSchoolYear(matchedSchoolYear);
     }
     setSavedToProgress(false);
     setAppState('QUIZ');
@@ -443,6 +498,8 @@ export default function App() {
     setQuestions(assignment.questions);
     setCurrentAssignmentId(assignment.id);
     setCurrentSharedTemplateId(assignment.templateId || null);
+    setCurrentAssignmentClassId(assignment.classId || userProfile?.classId || null);
+    setCurrentAssignmentSchoolYear(assignment.schoolYear || selectedSchoolYear);
     setSavedToProgress(false);
     setAppState('QUIZ');
   };
@@ -455,6 +512,8 @@ export default function App() {
     setIsGenerating(true);
     setCurrentAssignmentId(null);
     setCurrentSharedTemplateId(null);
+    setCurrentAssignmentClassId(null);
+    setCurrentAssignmentSchoolYear(null);
     setSavedToProgress(false);
     
     try {
@@ -495,12 +554,13 @@ export default function App() {
           }
         }
 
+        const effectiveSchoolYear = currentAssignmentSchoolYear || selectedSchoolYear;
         await addDoc(collection(db, 'results'), cleanFirestoreData({
-          uid: user.uid,
+          uid: userProfile.uid || user.uid,
           assignmentId: currentAssignmentId || null,
           sharedTemplateId: currentSharedTemplateId || null,
-          classId: userProfile.classId || null,
-          schoolYear: selectedSchoolYear,
+          classId: currentAssignmentClassId || userProfile.classId || null,
+          schoolYear: effectiveSchoolYear,
           subject: selectedSubject,
           topic: selectedTopic,
           score: score,
@@ -508,6 +568,9 @@ export default function App() {
           totalQuestions: questions.length,
           timestamp: serverTimestamp()
         }));
+        if (currentAssignmentSchoolYear && currentAssignmentSchoolYear !== selectedSchoolYear) {
+          handleChangeSchoolYear(currentAssignmentSchoolYear);
+        }
         setSavedToProgress(true);
       } catch (error) {
         handleFirestoreError(error, OperationType.CREATE, 'results');
@@ -537,6 +600,8 @@ export default function App() {
     setQuestions([]);
     setCurrentAssignmentId(null);
     setCurrentSharedTemplateId(null);
+    setCurrentAssignmentClassId(null);
+    setCurrentAssignmentSchoolYear(null);
     setSavedToProgress(false);
   };
 
@@ -549,6 +614,8 @@ export default function App() {
     setQuestions([]);
     setCurrentAssignmentId(null);
     setCurrentSharedTemplateId(null);
+    setCurrentAssignmentClassId(null);
+    setCurrentAssignmentSchoolYear(null);
     setSavedToProgress(false);
   };
 

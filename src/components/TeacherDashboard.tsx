@@ -1009,18 +1009,40 @@ export default function TeacherDashboard({ userProfile, selectedSchoolYear: sele
     XLSX.writeFile(workbook, `Tai_Khoan_Hoc_Sinh_${activeSchoolYear}_Lop_${classNameStr.replace(/\s+/g, '_')}.xlsx`);
   };
 
+  const normalizeExamText = (text?: string | null) =>
+    (text || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
   const filteredResults = results.filter(r => {
     const selectedAsObj = selectedAssignment && !selectedAssignment.startsWith('template_')
       ? assignments.find(a => a.id === selectedAssignment)
       : null;
+    const directAsObj = r.assignmentId && !r.assignmentId.startsWith('template_')
+      ? rawAssignments.find(a => a.id === r.assignmentId)
+      : null;
     const student = allStudents.find(s => s.uid === r.uid);
-    const resultClassId = r.classId || student?.classId;
+    const resultClassId = r.classId || directAsObj?.classId || student?.classId;
     const resultSchoolYear =
+      directAsObj?.schoolYear ||
+      (directAsObj?.classId ? classYearMap.get(directAsObj.classId) : undefined) ||
       r.schoolYear ||
       (resultClassId ? classYearMap.get(resultClassId) : undefined) ||
       studentYearMap.get(r.uid) ||
       DEFAULT_SCHOOL_YEAR;
-    if (resultSchoolYear !== activeSchoolYear) return false;
+
+    const matchesSelectedAsObj = Boolean(
+      selectedAsObj && (
+        r.assignmentId === selectedAsObj.id ||
+        (selectedAsObj.templateId &&
+          (r.sharedTemplateId === selectedAsObj.templateId || r.assignmentId === `template_${selectedAsObj.templateId}`) &&
+          (!selectedAsObj.classId || resultClassId === selectedAsObj.classId)) ||
+        ((r.sharedTemplateId || r.assignmentId?.startsWith('template_')) &&
+          normalizeExamText(r.topic) === normalizeExamText(selectedAsObj.title) &&
+          normalizeExamText(r.subject) === normalizeExamText(selectedAsObj.subject) &&
+          (!selectedAsObj.classId || resultClassId === selectedAsObj.classId))
+      )
+    );
+
+    if (resultSchoolYear !== activeSchoolYear && !matchesSelectedAsObj) return false;
 
     const matchesAssignment = !selectedAssignment
       || r.assignmentId === selectedAssignment
@@ -1028,9 +1050,7 @@ export default function TeacherDashboard({ userProfile, selectedSchoolYear: sele
         r.sharedTemplateId === selectedAssignment.replace('template_', '') ||
         r.assignmentId === selectedAssignment
       ))
-      || (selectedAsObj?.templateId
-        && (r.sharedTemplateId === selectedAsObj.templateId || r.assignmentId === `template_${selectedAsObj.templateId}`)
-        && (!selectedAsObj.classId || resultClassId === selectedAsObj.classId));
+      || matchesSelectedAsObj;
     const matchesAssignedClasses = assignedClassIds.length === 0 || (student?.classId && assignedClassIds.includes(student.classId)) || (r.classId && assignedClassIds.includes(r.classId));
     return matchesAssignment && matchesAssignedClasses;
   });

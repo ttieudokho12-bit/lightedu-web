@@ -428,6 +428,58 @@ export default function StudentDashboard({ userProfile, selectedSchoolYear: sele
     [rawResults, classYearMap, activeSchoolYear]
   );
 
+  const normalizeExamText = (text?: string | null) =>
+    (text || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+  const isResultMatchingAssignment = (r: QuizResult, assignment: Assignment): boolean => {
+    if (r.assignmentId === assignment.id) return true;
+    if (
+      assignment.templateId &&
+      (r.sharedTemplateId === assignment.templateId ||
+        r.assignmentId === `template_${assignment.templateId}`)
+    ) {
+      return true;
+    }
+    if (
+      (r.assignmentId || r.sharedTemplateId) &&
+      normalizeExamText(r.topic) === normalizeExamText(assignment.title) &&
+      normalizeExamText(r.subject) === normalizeExamText(assignment.subject)
+    ) {
+      return true;
+    }
+    return false;
+  };
+
+  const getLatestResultForAssignment = (assignment: Assignment): QuizResult | undefined => {
+    // rawResults is sorted oldest -> newest; scan from newest to oldest so retries show latest score
+    for (let i = rawResults.length - 1; i >= 0; i--) {
+      if (isResultMatchingAssignment(rawResults[i], assignment)) {
+        return rawResults[i];
+      }
+    }
+    return undefined;
+  };
+
+  // Shared-link exams completed by the student that don't correspond to a formal class assignment in the current year
+  const standaloneSharedResults = React.useMemo(() => {
+    const seenKeys = new Set<string>();
+    const list: QuizResult[] = [];
+    for (let i = results.length - 1; i >= 0; i--) {
+      const r = results[i];
+      const isShared = Boolean(r.sharedTemplateId || r.assignmentId?.startsWith('template_'));
+      if (!isShared) continue;
+      if (assignments.some(a => isResultMatchingAssignment(r, a))) continue;
+      const key =
+        r.sharedTemplateId ||
+        (r.assignmentId?.startsWith('template_') ? r.assignmentId.replace('template_', '') : '') ||
+        `${normalizeExamText(r.subject)}::${normalizeExamText(r.topic)}`;
+      if (seenKeys.has(key)) continue;
+      seenKeys.add(key);
+      list.push(r);
+    }
+    return list;
+  }, [results, assignments]);
+
   const allResults = React.useMemo(
     () => rawAllResults.filter(r => {
       const year = r.schoolYear || (r.classId ? classYearMap.get(r.classId) : undefined) || studentYearMap.get(r.uid) || DEFAULT_SCHOOL_YEAR;
@@ -1234,9 +1286,9 @@ export default function StudentDashboard({ userProfile, selectedSchoolYear: sele
                 <h3 className="text-base sm:text-lg font-black text-stone-900 tracking-tight">
                   Bài tập thầy cô giao
                 </h3>
-                {assignments.length > 0 && (
+                {(assignments.length + standaloneSharedResults.length) > 0 && (
                   <span className="px-2.5 py-0.5 bg-[#E6F7F0] text-[#00A66C] text-xs font-black rounded-full border border-[#CCF0E1]">
-                    {assignments.length} bài
+                    {assignments.length + standaloneSharedResults.length} bài
                   </span>
                 )}
               </div>
@@ -1301,7 +1353,7 @@ export default function StudentDashboard({ userProfile, selectedSchoolYear: sele
                     </button>
                   </div>
                 </div>
-              ) : assignments.length === 0 ? (
+              ) : (assignments.length === 0 && standaloneSharedResults.length === 0) ? (
                 <div className="p-4 sm:p-5 bg-stone-50/80 rounded-2xl border border-stone-200/60 text-center flex flex-col sm:flex-row items-center justify-center gap-3">
                   <CheckCircle className="w-5 h-5 text-[#00A66C] shrink-0" />
                   <p className="text-xs text-stone-600 font-medium">
@@ -1315,7 +1367,7 @@ export default function StudentDashboard({ userProfile, selectedSchoolYear: sele
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-stone-600">
-                      Danh sách bài tập ({assignments.length}):
+                      Danh sách bài tập ({assignments.length + standaloneSharedResults.length}):
                     </span>
                     <button
                       onClick={(e) => {
@@ -1331,20 +1383,8 @@ export default function StudentDashboard({ userProfile, selectedSchoolYear: sele
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-1">
                     {assignments.slice(0, 6).map((assignment) => {
-                      const isCompleted = results.some(
-                        r =>
-                          r.assignmentId === assignment.id ||
-                          (assignment.templateId &&
-                            (r.sharedTemplateId === assignment.templateId ||
-                              r.assignmentId === `template_${assignment.templateId}`))
-                      );
-                      const myResult = results.find(
-                        r =>
-                          r.assignmentId === assignment.id ||
-                          (assignment.templateId &&
-                            (r.sharedTemplateId === assignment.templateId ||
-                              r.assignmentId === `template_${assignment.templateId}`))
-                      );
+                      const myResult = getLatestResultForAssignment(assignment);
+                      const isCompleted = Boolean(myResult);
                       
                       return (
                         <div
@@ -1365,7 +1405,7 @@ export default function StudentDashboard({ userProfile, selectedSchoolYear: sele
                                   ? 'bg-emerald-100 text-emerald-800 border border-emerald-200' 
                                   : 'bg-rose-100 text-rose-800 border border-rose-200'
                               }`}>
-                                {isCompleted ? (myResult ? `Đã làm (${myResult.score}/10đ)` : 'Đã làm') : 'Chưa làm'}
+                                {isCompleted ? (myResult ? `Đã làm (${myResult.score}/${myResult.totalQuestions || assignment.questions.length})` : 'Đã làm') : 'Chưa làm'}
                               </span>
                             </div>
 
@@ -1390,6 +1430,51 @@ export default function StudentDashboard({ userProfile, selectedSchoolYear: sele
                               <span>{isCompleted ? 'Làm lại' : 'Làm bài'}</span>
                               <ArrowRight className="w-3.5 h-3.5" />
                             </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {standaloneSharedResults.slice(0, Math.max(0, 6 - assignments.length)).map((res) => {
+                      const shareRefId =
+                        res.sharedTemplateId ||
+                        (res.assignmentId?.startsWith('template_') ? res.assignmentId.replace('template_', '') : '');
+                      return (
+                        <div
+                          key={`shared-${res.id}`}
+                          className="p-4 rounded-2xl border transition-all flex flex-col justify-between group hover:shadow-md bg-emerald-50/40 border-emerald-200/80 hover:border-emerald-300"
+                        >
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[10px] font-extrabold px-2.5 py-0.5 rounded-full bg-white text-stone-700 border border-stone-200/80 uppercase tracking-wider truncate">
+                                {res.subject}
+                              </span>
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                Đã làm ({res.score}/{res.totalQuestions})
+                              </span>
+                            </div>
+
+                            <h4 className="text-xs sm:text-sm font-bold text-stone-800 group-hover:text-[#00A66C] line-clamp-2 leading-snug transition-colors">
+                              {res.topic}
+                            </h4>
+                          </div>
+
+                          <div className="flex items-center justify-between pt-3 mt-3 border-t border-stone-200/50 text-[11px]">
+                            <span className="text-indigo-600 font-bold text-[10px] bg-indigo-50 px-2 py-0.5 rounded-full border border-indigo-100">
+                              Qua link chia sẻ
+                            </span>
+                            {onOpenSharedExam && shareRefId && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  onOpenSharedExam(shareRefId);
+                                }}
+                                className="px-3 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1 transition-all shadow-xs cursor-pointer bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50"
+                              >
+                                <span>Làm lại</span>
+                                <ArrowRight className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
@@ -2254,20 +2339,16 @@ export default function StudentDashboard({ userProfile, selectedSchoolYear: sele
                     ))}
                   </div>
 
-                  {assignments.length > 0 ? (
+                  {(assignments.length > 0 || standaloneSharedResults.length > 0) ? (
                     <>
-                      {assignments.filter(a => assignmentSubjectFilter === 'Tất cả' || a.subject === assignmentSubjectFilter).length > 0 ? (
+                      {(assignments.filter(a => assignmentSubjectFilter === 'Tất cả' || a.subject === assignmentSubjectFilter).length > 0 ||
+                        standaloneSharedResults.filter(r => assignmentSubjectFilter === 'Tất cả' || r.subject === assignmentSubjectFilter).length > 0) ? (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           {assignments
                             .filter(a => assignmentSubjectFilter === 'Tất cả' || a.subject === assignmentSubjectFilter)
                             .map((assignment) => {
-                              const isCompleted = results.some(
-                                r =>
-                                  r.assignmentId === assignment.id ||
-                                  (assignment.templateId &&
-                                    (r.sharedTemplateId === assignment.templateId ||
-                                      r.assignmentId === `template_${assignment.templateId}`))
-                              );
+                              const myResult = getLatestResultForAssignment(assignment);
+                              const isCompleted = Boolean(myResult);
                               return (
                                 <div
                                   key={assignment.id}
@@ -2290,7 +2371,9 @@ export default function StudentDashboard({ userProfile, selectedSchoolYear: sele
                                         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                                           isCompleted ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
                                         }`}>
-                                          {isCompleted ? 'Đã hoàn thành' : 'Chưa làm'}
+                                          {isCompleted
+                                            ? (myResult ? `Đã hoàn thành (${myResult.score}/${myResult.totalQuestions || assignment.questions.length})` : 'Đã hoàn thành')
+                                            : 'Chưa làm'}
                                         </span>
                                         <span className="text-[10px] text-stone-400 font-medium">{assignment.questions.length} câu hỏi</span>
                                       </div>
@@ -2317,6 +2400,52 @@ export default function StudentDashboard({ userProfile, selectedSchoolYear: sele
                                       <span>{isCompleted ? 'Làm lại' : 'Làm bài'}</span>
                                       <ArrowRight className="w-3 h-3" />
                                     </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+
+                          {standaloneSharedResults
+                            .filter(r => assignmentSubjectFilter === 'Tất cả' || r.subject === assignmentSubjectFilter)
+                            .map((res) => {
+                              const shareRefId =
+                                res.sharedTemplateId ||
+                                (res.assignmentId?.startsWith('template_') ? res.assignmentId.replace('template_', '') : '');
+                              return (
+                                <div
+                                  key={`shared-tab-${res.id}`}
+                                  className="p-5 rounded-2xl border transition-all group flex flex-col justify-between min-h-[160px] bg-emerald-50/20 border-emerald-100 hover:border-emerald-300 hover:shadow-lg hover:shadow-emerald-50/50"
+                                >
+                                  <div>
+                                    <div className="flex items-center justify-between mb-2">
+                                      <span className="text-[9px] font-bold px-2.5 py-0.5 rounded-full border uppercase tracking-widest bg-emerald-100 text-emerald-800 border-emerald-200">
+                                        {res.subject}
+                                      </span>
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">
+                                          Đã hoàn thành ({res.score}/{res.totalQuestions})
+                                        </span>
+                                        <span className="text-[10px] text-stone-400 font-medium">{res.totalQuestions} câu hỏi</span>
+                                      </div>
+                                    </div>
+                                    <h4 className="text-sm font-bold line-clamp-2 leading-snug transition-colors text-emerald-700 group-hover:text-emerald-800">
+                                      {res.topic}
+                                    </h4>
+                                  </div>
+
+                                  <div className="flex items-center justify-between mt-4 pt-4 border-t border-stone-50">
+                                    <span className="text-[10px] text-indigo-600 font-bold bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-100">
+                                      Đề qua link chia sẻ
+                                    </span>
+                                    {onOpenSharedExam && shareRefId && (
+                                      <button
+                                        onClick={() => onOpenSharedExam(shareRefId)}
+                                        className="px-4 py-2 text-[10px] font-bold rounded-xl transition-all flex items-center gap-1 shadow-md bg-emerald-600 text-white hover:bg-emerald-700 shadow-emerald-100 cursor-pointer"
+                                      >
+                                        <span>Làm lại</span>
+                                        <ArrowRight className="w-3 h-3" />
+                                      </button>
+                                    )}
                                   </div>
                                 </div>
                               );
