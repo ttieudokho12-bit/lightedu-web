@@ -48,3 +48,14 @@
   scrollbar-width: none;  /* Firefox */
 }
 
+/* Option letter pseudo-elements: completely immune to browser auto-translate turning "A" into "MỘT" */
+.option-letter-A::before { content: "A"; }
+.option-letter-B::before { content: "B"; }
+.option-letter-C::before { content: "C"; }
+.option-letter-D::before { content: "D"; }
+.option-letter-dot-A::before { content: "A."; }
+.option-letter-dot-B::before { content: "B."; }
+.option-letter-dot-C::before { content: "C."; }
+.option-letter-dot-D::before { content: "D."; }
+
+

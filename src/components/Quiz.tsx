@@ -8,6 +8,7 @@ import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { formatMathSymbols, cleanOptionText } from '../services/mathUtils';
 import { verifyAndReplaceQuestion } from '../services/gemini';
+import { normalizeQuestions, normalizeQuestion, getOrderedOptionEntries } from '../utils/questionOptions';
 import { TransparentImage } from './Login';
 import { VocabularyIllustration } from './VocabularyIllustration';
 import { SpeakingPractice } from './SpeakingPractice';
@@ -134,14 +135,14 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject, 
   const audioSourceRef = useRef<AudioBufferSourceNode | null>(null);
   
   // Local questions state to support AI question replacement on error report
-  const [quizQuestions, setQuizQuestions] = useState<Question[]>(() => questions || []);
+  const [quizQuestions, setQuizQuestions] = useState<Question[]>(() => normalizeQuestions(questions));
   const [isReportingError, setIsReportingError] = useState(false);
   const [reportResult, setReportResult] = useState<{ hasError: boolean; message: string } | null>(null);
 
   // Sync questions prop to local state
   useEffect(() => {
     if (questions) {
-      setQuizQuestions(questions);
+      setQuizQuestions(normalizeQuestions(questions));
     }
   }, [questions]);
 
@@ -165,8 +166,8 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject, 
       });
 
       if (res.hasError && res.correctedQuestion) {
-        // Enforce same ID
-        const corrected = { ...res.correctedQuestion, id: currentQuestion.id };
+        // Enforce same ID and canonical A-B-C-D option order
+        const corrected = normalizeQuestion({ ...res.correctedQuestion, id: currentQuestion.id });
         
         // Update local quizQuestions state
         setQuizQuestions(prev => prev.map((q, idx) => idx === currentIndex ? corrected : q));
@@ -1121,10 +1122,7 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject, 
 
               {/* Options list */}
               <div className="grid grid-cols-1 gap-4 mt-6">
-                {(['A', 'B', 'C', 'D'] as const)
-                  .filter((key) => currentQuestion.options && currentQuestion.options[key] !== undefined)
-                  .map((key) => {
-                  const value = currentQuestion.options[key];
+                {getOrderedOptionEntries(currentQuestion.options).map(([key, value]) => {
                   const isCorrect = key === currentQuestion.correctAnswer;
                   const isSelected = key === selectedAnswer;
                   
@@ -1152,13 +1150,12 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject, 
                       disabled={isAnswered}
                       className={`group flex items-center gap-5 p-5 rounded-2xl text-left transition-all font-bold text-lg md:text-xl relative overflow-visible cursor-pointer ${containerClass}`}
                     >
-                      {/* Option letter badge */}
+                      {/* Option letter badge rendered via CSS ::before so browser translators can never convert A to MỘT */}
                       <span
                         translate="no"
-                        className={`notranslate w-11 h-11 flex-shrink-0 flex items-center justify-center rounded-full font-black text-lg border transition-all ${badgeClass}`}
-                      >
-                        {key}
-                      </span>
+                        aria-label={`Đáp án ${key}`}
+                        className={`notranslate option-letter-${key} w-11 h-11 flex-shrink-0 flex items-center justify-center rounded-full font-black text-lg border transition-all ${badgeClass}`}
+                      />
 
                       {/* Option value content */}
                       <div className="flex-1">
@@ -1312,10 +1309,9 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject, 
                           <span>Vậy đáp án đúng là: </span>
                           <span
                             translate="no"
-                            className="notranslate inline-flex items-center justify-center w-8 h-8 rounded-full bg-rose-500 text-white text-base sm:text-lg font-black shadow-sm"
-                          >
-                            {currentQuestion.correctAnswer}
-                          </span>
+                            aria-label={`Đáp án ${currentQuestion.correctAnswer}`}
+                            className={`notranslate option-letter-${currentQuestion.correctAnswer} inline-flex items-center justify-center w-8 h-8 rounded-full bg-rose-500 text-white text-base sm:text-lg font-black shadow-sm`}
+                          />
                           <span className="text-rose-500 text-2xl sm:text-3xl font-black px-1.5 inline-flex items-center">
                             <Markdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
                               {formatMathSymbols(

@@ -5,6 +5,7 @@ import { BookOpen, Play, LogOut, Home, Link2, CheckCircle2, AlertCircle, User as
 import { auth, db, handleFirestoreError, OperationType, cleanFirestoreData } from './firebase';
 import { Subject, Question, UserProfile, Assignment, QuizTemplate, DEFAULT_SCHOOL_YEAR, DEFAULT_USER_SCHOOL_YEAR } from './types';
 import { generateQuestions } from './services/gemini';
+import { normalizeQuestions } from './utils/questionOptions';
 
 // Components
 import Login from './components/Login';
@@ -158,7 +159,11 @@ export default function App() {
         if (cancelled) return;
         if (primarySnap.exists()) {
           const data = primarySnap.data() as QuizTemplate;
-          setSharedExamTemplate({ id: primarySnap.id, ...data });
+          setSharedExamTemplate({
+            id: primarySnap.id,
+            ...data,
+            questions: normalizeQuestions(data.questions),
+          });
           setSharedExamResolvedSource(sharedExamSource);
           return;
         }
@@ -167,7 +172,11 @@ export default function App() {
         if (cancelled) return;
         if (fallbackSnap.exists()) {
           const data = fallbackSnap.data() as QuizTemplate;
-          setSharedExamTemplate({ id: fallbackSnap.id, ...data });
+          setSharedExamTemplate({
+            id: fallbackSnap.id,
+            ...data,
+            questions: normalizeQuestions(data.questions),
+          });
           setSharedExamResolvedSource(fallbackCollection === 'assignments' ? 'assignment' : 'template');
         } else {
           setSharedExamTemplate(null);
@@ -388,7 +397,7 @@ export default function App() {
     const resolvedId = sharedExamTemplate.id || sharedExamId;
     setSelectedSubject(sharedExamTemplate.subject);
     setSelectedTopic(sharedExamTemplate.title);
-    setQuestions(sharedExamTemplate.questions);
+    setQuestions(normalizeQuestions(sharedExamTemplate.questions));
 
     if (sharedExamResolvedSource === 'assignment') {
       const assignmentData = sharedExamTemplate as unknown as Assignment;
