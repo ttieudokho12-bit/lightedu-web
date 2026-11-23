@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Trophy, RotateCcw, Home, Share2 } from 'lucide-react';
+import { Trophy, RotateCcw, Home, BarChart2, CheckCircle2 } from 'lucide-react';
 
 interface ResultProps {
   score: number;
@@ -9,10 +9,12 @@ interface ResultProps {
   topic: string;
   onRetry: () => void;
   onHome: () => void;
+  onViewProgress?: () => void;
+  savedToProgress?: boolean;
 }
 
-export default function Result({ score, total, subject, topic, onRetry, onHome }: ResultProps) {
-  const percentage = Math.round((score / total) * 100);
+export default function Result({ score, total, subject, topic, onRetry, onHome, onViewProgress, savedToProgress }: ResultProps) {
+  const percentage = total > 0 ? Math.round((score / total) * 100) : 0;
   
   let message = "Cố gắng hơn nữa nhé!";
   let color = "text-orange-500";
@@ -33,17 +35,17 @@ export default function Result({ score, total, subject, topic, onRetry, onHome }
       <motion.div
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-white p-12 rounded-3xl border border-stone-200 shadow-xl relative overflow-hidden"
+        className="bg-white p-8 sm:p-12 rounded-3xl border border-stone-200 shadow-xl relative overflow-hidden"
       >
         {/* Decorative background */}
-        <div className={`absolute top-0 left-0 w-full h-2 ${bgColor.replace('bg-', 'bg-')}`} />
+        <div className={`absolute top-0 left-0 w-full h-2 ${bgColor}`} />
         
-        <div className={`inline-flex p-6 rounded-full ${bgColor} mb-8`}>
+        <div className={`inline-flex p-6 rounded-full ${bgColor} mb-6`}>
           <Trophy className={`w-16 h-16 ${color}`} />
         </div>
 
         <h2 className="text-3xl font-bold text-stone-900 mb-2">Kết quả ôn tập</h2>
-        <p className="text-stone-500 font-mono uppercase tracking-widest text-sm mb-8">
+        <p className="text-stone-500 font-mono uppercase tracking-widest text-sm mb-6">
           {subject} • {topic}
         </p>
 
@@ -52,21 +54,37 @@ export default function Result({ score, total, subject, topic, onRetry, onHome }
           <span className="text-2xl text-stone-300 font-bold">/ {total}</span>
         </div>
 
-        <p className="text-xl font-medium text-stone-700 mb-12 italic serif">
+        <p className="text-xl font-medium text-stone-700 mb-6 italic serif">
           {message}
         </p>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {savedToProgress && (
+          <div className="inline-flex items-center gap-2 px-4 py-2 mb-8 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold">
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+            <span>Kết quả đã được lưu vào Tiến độ học tập của bạn!</span>
+          </div>
+        )}
+
+        <div className={`grid grid-cols-1 ${onViewProgress ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-3 mt-2`}>
           <button
             onClick={onRetry}
-            className="flex items-center justify-center gap-2 py-4 px-6 bg-stone-900 text-white font-bold rounded-xl hover:bg-stone-800 transition-all shadow-md"
+            className="flex items-center justify-center gap-2 py-3.5 px-5 bg-stone-900 text-white font-bold rounded-xl hover:bg-stone-800 transition-all shadow-md cursor-pointer"
           >
             <RotateCcw className="w-5 h-5" />
-            Luyện tập lại
+            Làm lại bài
           </button>
+          {onViewProgress && (
+            <button
+              onClick={onViewProgress}
+              className="flex items-center justify-center gap-2 py-3.5 px-5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-md cursor-pointer"
+            >
+              <BarChart2 className="w-5 h-5" />
+              Tiến độ học tập
+            </button>
+          )}
           <button
             onClick={onHome}
-            className="flex items-center justify-center gap-2 py-4 px-6 bg-white border border-stone-200 text-stone-700 font-bold rounded-xl hover:bg-stone-50 transition-all shadow-sm"
+            className="flex items-center justify-center gap-2 py-3.5 px-5 bg-white border border-stone-200 text-stone-700 font-bold rounded-xl hover:bg-stone-50 transition-all shadow-sm cursor-pointer"
           >
             <Home className="w-5 h-5" />
             Về trang chủ

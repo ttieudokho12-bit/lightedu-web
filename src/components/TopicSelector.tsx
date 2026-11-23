@@ -1,19 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { ArrowLeft, Send, Sparkles, ChevronRight, Home, Languages } from 'lucide-react';
-import { Subject, PREDEFINED_TOPICS, UserProfile } from '../types';
+import { Subject, PREDEFINED_TOPICS, UserProfile, ClassRoom, DEFAULT_USER_SCHOOL_YEAR } from '../types';
 import { db } from '../firebase';
 import { doc, getDoc, collection, getDocs, query, where, onSnapshot } from 'firebase/firestore';
+import { getEffectiveCustomTopicsForStudent } from '../utils/classTopicsSync';
 
 interface TopicSelectorProps {
   subject: Subject;
   userProfile?: UserProfile | null;
+  selectedSchoolYear?: string;
   onBack: () => void;
   onHome?: () => void;
   onStartQuiz: (topic: string, count: number, difficulty?: string, englishPercent?: number) => void;
 }
 
-export default function TopicSelector({ subject, userProfile, onBack, onHome, onStartQuiz }: TopicSelectorProps) {
+export default function TopicSelector({ subject, userProfile, selectedSchoolYear, onBack, onHome, onStartQuiz }: TopicSelectorProps) {
   const [customTopic, setCustomTopic] = useState('');
   const [selectedTopic, setSelectedTopic] = useState<string | null>(null);
   const [questionCount, setQuestionCount] = useState(10);
@@ -72,46 +74,31 @@ export default function TopicSelector({ subject, userProfile, onBack, onHome, on
     return () => unsubscribe();
   }, [userProfile?.uid]);
 
+  const activeSchoolYear = selectedSchoolYear || userProfile?.schoolYear || DEFAULT_USER_SCHOOL_YEAR;
+
   useEffect(() => {
     const loadCustomTopics = async () => {
       setIsLoadingCustom(true);
       try {
         const classesSnap = await getDocs(collection(db, 'classes'));
+        const allClasses: ClassRoom[] = classesSnap.docs.map(d => ({
+          id: d.id,
+          ...(d.data() as Omit<ClassRoom, 'id'>),
+        }));
+
         const allowedGradesList = Array.from(new Set([
           userProfile?.grade || '',
           ...(userProfile?.allowedGrades || [])
         ])).filter(Boolean);
 
-        const customTopicsList: string[] = [];
-        
-        classesSnap.docs.forEach(doc => {
-          const data = doc.data();
-          const className = data.name || '';
-          
-          // Check if this class is relevant to the student's allowed grades
-          const isAllowed = allowedGradesList.some(grade => {
-            const g = grade.toLowerCase();
-            const c = className.toLowerCase();
-            if (c.includes(g) || g.includes(c)) return true;
-            
-            const gMatch = g.match(/([1-9])/);
-            const cMatch = c.match(/([1-9])/);
-            return gMatch && cMatch && gMatch[1] === cMatch[1];
-          });
-          
-          if (isAllowed || doc.id === userProfile?.classId) {
-            const custom = data.customTopics?.[subject];
-            if (Array.isArray(custom)) {
-              custom.forEach(topic => {
-                if (!customTopicsList.includes(topic)) {
-                  customTopicsList.push(topic);
-                }
-              });
-            }
-          }
-        });
+        const effectiveMap = getEffectiveCustomTopicsForStudent(
+          allClasses,
+          activeSchoolYear,
+          allowedGradesList,
+          userProfile?.classId
+        );
 
-        setClassCustomTopics(customTopicsList);
+        setClassCustomTopics(effectiveMap[subject] || []);
       } catch (err) {
         console.error("Error loading class custom topics:", err);
       } finally {
@@ -120,7 +107,7 @@ export default function TopicSelector({ subject, userProfile, onBack, onHome, on
     };
 
     loadCustomTopics();
-  }, [userProfile?.classId, userProfile?.allowedGrades, userProfile?.grade, subject]);
+  }, [userProfile?.classId, userProfile?.allowedGrades, userProfile?.grade, subject, activeSchoolYear]);
 
   const handleStart = () => {
     const topic = selectedTopic || customTopic;

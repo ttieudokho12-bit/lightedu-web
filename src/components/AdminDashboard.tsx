@@ -1,13 +1,29 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { UserPlus, Users, Trash2, Shield, GraduationCap, UserCheck, Mail, Lock, User as UserIcon, Loader2, Search, FileText, CheckCircle2, AlertCircle, Download, School, Pencil, X, BookOpenCheck, Key } from 'lucide-react';
+import { UserPlus, Users, Trash2, Shield, GraduationCap, UserCheck, Mail, Lock, User as UserIcon, Loader2, Search, FileText, CheckCircle2, AlertCircle, Download, School, Pencil, X, BookOpenCheck, Key, Calendar, Plus, MapPin, Copy } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { db, auth, handleFirestoreError, OperationType, cleanFirestoreData } from '../firebase';
-import { collection, query, onSnapshot, doc, setDoc, deleteDoc, getDocs, where } from 'firebase/firestore';
-import { UserProfile, ClassRoom, Subject, SUBJECTS } from '../types';
+import { collection, query, onSnapshot, doc, setDoc, updateDoc, deleteDoc, getDocs, where } from 'firebase/firestore';
+import { UserProfile, ClassRoom, Subject, SUBJECTS, DEFAULT_SCHOOL_YEAR, PRESET_SCHOOL_YEARS } from '../types';
 import { initializeApp, getApp, getApps } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
 import firebaseConfig from '../../firebase-applet-config.json';
+import { LocationSchoolSelector } from './LocationSchoolSelector';
+import {
+  DEFAULT_PROVINCE,
+  getProvinces,
+  getCommunesByProvince,
+  getSchoolsByCommune,
+  normalizeViSearch,
+} from '../data/schoolCatalog';
+import {
+  SOURCE_TOPICS_SCHOOL_YEAR,
+  TARGET_INHERIT_SCHOOL_YEAR,
+  hasAnyCustomTopics,
+  mergeCustomTopicsMaps,
+  getInheritedCustomTopicsForClass,
+  extractGradeDigit,
+} from '../utils/classTopicsSync';
 
 // Secondary app for creating users without logging out the admin
 const getSecondaryAuth = () => {
@@ -21,13 +37,45 @@ const getSecondaryAuth = () => {
   return getAuth(secondaryApp);
 };
 
-export default function AdminDashboard() {
+interface AdminDashboardProps {
+  selectedSchoolYear?: string;
+  onChangeSchoolYear?: (year: string) => void;
+}
+
+export default function AdminDashboard({ selectedSchoolYear: selectedSchoolYearProp, onChangeSchoolYear: onChangeSchoolYearProp }: AdminDashboardProps) {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [classes, setClasses] = useState<ClassRoom[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedSchoolYear, setSelectedSchoolYear] = useState<string>(selectedSchoolYearProp || DEFAULT_SCHOOL_YEAR);
+
+  useEffect(() => {
+    if (selectedSchoolYearProp && selectedSchoolYearProp !== selectedSchoolYear) {
+      setSelectedSchoolYear(selectedSchoolYearProp);
+      setSelectedClassFilter('all');
+      setSelectedUserIds([]);
+      setSelectedClassId('');
+      setSelectedTeacherClassIds([]);
+      setBulkClassId('');
+      setBulkSelectedTeacherClassIds([]);
+      setSelectedTopicClassId('');
+      setBulkResults([]);
+    }
+  }, [selectedSchoolYearProp]);
+  const [customSchoolYears, setCustomSchoolYears] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('adminCustomSchoolYears');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return [];
+  });
+  const [isAddingSchoolYear, setIsAddingSchoolYear] = useState(false);
+  const [newSchoolYearInput, setNewSchoolYearInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRoleFilter, setSelectedRoleFilter] = useState<'all' | 'student' | 'teacher'>('all');
   const [selectedClassFilter, setSelectedClassFilter] = useState<string>('all');
+  const [selectedProvinceFilter, setSelectedProvinceFilter] = useState<string>('all');
+  const [selectedCommuneFilter, setSelectedCommuneFilter] = useState<string>('all');
+  const [selectedSchoolFilter, setSelectedSchoolFilter] = useState<string>('all');
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
   
   // New Class Form
@@ -50,7 +98,7 @@ export default function AdminDashboard() {
   // Student & Teacher Metadata States for Creation
   const [schoolName, setSchoolName] = useState('');
   const [communeName, setCommuneName] = useState('');
-  const [provinceName, setProvinceName] = useState('');
+  const [provinceName, setProvinceName] = useState(DEFAULT_PROVINCE);
   const [selectedGrades, setSelectedGrades] = useState<string[]>([]);
   const [selectedTeacherSubjects, setSelectedTeacherSubjects] = useState<Subject[]>([]);
   const [selectedTeacherClassIds, setSelectedTeacherClassIds] = useState<string[]>([]);
@@ -65,7 +113,7 @@ export default function AdminDashboard() {
   // Bulk Student & Teacher Metadata States
   const [bulkSchoolName, setBulkSchoolName] = useState('');
   const [bulkCommuneName, setBulkCommuneName] = useState('');
-  const [bulkProvinceName, setBulkProvinceName] = useState('');
+  const [bulkProvinceName, setBulkProvinceName] = useState(DEFAULT_PROVINCE);
   const [bulkSelectedGrades, setBulkSelectedGrades] = useState<string[]>([]);
   const [bulkSelectedTeacherSubjects, setBulkSelectedTeacherSubjects] = useState<Subject[]>([]);
   const [bulkSelectedTeacherClassIds, setBulkSelectedTeacherClassIds] = useState<string[]>([]);
@@ -73,6 +121,7 @@ export default function AdminDashboard() {
   // Editing User States
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
   const [editDisplayName, setEditDisplayName] = useState('');
+  const [editSchoolYear, setEditSchoolYear] = useState<string>(DEFAULT_SCHOOL_YEAR);
   const [editClassId, setEditClassId] = useState('');
   const [editSchoolName, setEditSchoolName] = useState('');
   const [editCommuneName, setEditCommuneName] = useState('');
@@ -108,6 +157,141 @@ export default function AdminDashboard() {
     };
   }, []);
 
+  // Automatically migrate all existing accounts (non-admin) & classes without schoolYear to 2025-2026
+  const migratedUserYearsRef = React.useRef<Set<string>>(new Set());
+  const migratedClassYearsRef = React.useRef<Set<string>>(new Set());
+  const synced2026ClassTopicsRef = React.useRef<Set<string>>(new Set());
+  const [isSyncingTopicsFrom2025, setIsSyncingTopicsFrom2025] = useState(false);
+
+  useEffect(() => {
+    const legacyUsers = users.filter(
+      u => u.role !== 'admin' && !u.schoolYear && !migratedUserYearsRef.current.has(u.uid)
+    );
+    if (legacyUsers.length === 0) return;
+
+    legacyUsers.forEach(u => migratedUserYearsRef.current.add(u.uid));
+    (async () => {
+      for (const u of legacyUsers) {
+        try {
+          await updateDoc(doc(db, 'users', u.uid), { schoolYear: DEFAULT_SCHOOL_YEAR });
+        } catch (err) {
+          console.warn(`Could not assign default schoolYear to user ${u.uid}:`, err);
+        }
+      }
+    })();
+  }, [users]);
+
+  useEffect(() => {
+    const legacyClasses = classes.filter(
+      c => !c.schoolYear && !migratedClassYearsRef.current.has(c.id)
+    );
+    if (legacyClasses.length === 0) return;
+
+    legacyClasses.forEach(c => migratedClassYearsRef.current.add(c.id));
+    (async () => {
+      for (const cls of legacyClasses) {
+        try {
+          await updateDoc(doc(db, 'classes', cls.id), { schoolYear: DEFAULT_SCHOOL_YEAR });
+        } catch (err) {
+          console.warn(`Could not assign default schoolYear to class ${cls.id}:`, err);
+        }
+      }
+    })();
+  }, [classes]);
+
+  // Automatically inherit customTopics from 2025-2026 into 2026-2027 classes that don't have customTopics yet
+  useEffect(() => {
+    if (classes.length === 0) return;
+    const classes2025WithTopics = classes.filter(
+      c => (c.schoolYear || DEFAULT_SCHOOL_YEAR) === SOURCE_TOPICS_SCHOOL_YEAR && hasAnyCustomTopics(c.customTopics)
+    );
+    if (classes2025WithTopics.length === 0) return;
+
+    const targetClassesToSync = classes.filter(
+      c =>
+        c.schoolYear === TARGET_INHERIT_SCHOOL_YEAR &&
+        c.customTopics === undefined &&
+        !synced2026ClassTopicsRef.current.has(c.id)
+    );
+    if (targetClassesToSync.length === 0) return;
+
+    (async () => {
+      for (const cls of targetClassesToSync) {
+        const inherited = getInheritedCustomTopicsForClass(cls.name, classes, SOURCE_TOPICS_SCHOOL_YEAR);
+        if (!hasAnyCustomTopics(inherited)) continue;
+        synced2026ClassTopicsRef.current.add(cls.id);
+        try {
+          await setDoc(doc(db, 'classes', cls.id), { customTopics: inherited }, { merge: true });
+        } catch (err) {
+          console.warn(`Could not inherit customTopics from 2025-2026 for class ${cls.id}:`, err);
+        }
+      }
+    })();
+  }, [classes]);
+
+  const availableSchoolYears = React.useMemo(() => {
+    const yearSet = new Set<string>([...PRESET_SCHOOL_YEARS, ...customSchoolYears, selectedSchoolYear]);
+    users.forEach(u => {
+      if (u.schoolYear) yearSet.add(u.schoolYear);
+    });
+    classes.forEach(c => {
+      if (c.schoolYear) yearSet.add(c.schoolYear);
+    });
+    return Array.from(yearSet).sort();
+  }, [customSchoolYears, selectedSchoolYear, users, classes]);
+
+  const classesInYear = React.useMemo(
+    () => classes.filter(c => (c.schoolYear || DEFAULT_SCHOOL_YEAR) === selectedSchoolYear),
+    [classes, selectedSchoolYear]
+  );
+
+  const usersInYear = React.useMemo(
+    () => users.filter(u => u.role !== 'admin' && (u.schoolYear || DEFAULT_SCHOOL_YEAR) === selectedSchoolYear),
+    [users, selectedSchoolYear]
+  );
+
+  const teacherCountInYear = React.useMemo(
+    () => usersInYear.filter(u => u.role === 'teacher').length,
+    [usersInYear]
+  );
+
+  const studentCountInYear = React.useMemo(
+    () => usersInYear.filter(u => u.role === 'student').length,
+    [usersInYear]
+  );
+
+  const handleChangeSchoolYear = (year: string) => {
+    setSelectedSchoolYear(year);
+    onChangeSchoolYearProp?.(year);
+    setSelectedClassFilter('all');
+    setSelectedUserIds([]);
+    setSelectedClassId('');
+    setSelectedTeacherClassIds([]);
+    setBulkClassId('');
+    setBulkSelectedTeacherClassIds([]);
+    setSelectedTopicClassId('');
+    setBulkResults([]);
+  };
+
+  const handleAddSchoolYear = () => {
+    const cleaned = newSchoolYearInput.trim();
+    if (!cleaned) return;
+    if (!/^\d{4}-\d{4}$/.test(cleaned)) {
+      alert('Vui lòng nhập năm học đúng định dạng YYYY-YYYY (Ví dụ: 2030-2031)');
+      return;
+    }
+    if (!availableSchoolYears.includes(cleaned)) {
+      const updated = [...customSchoolYears, cleaned];
+      setCustomSchoolYears(updated);
+      try {
+        localStorage.setItem('adminCustomSchoolYears', JSON.stringify(updated));
+      } catch {}
+    }
+    handleChangeSchoolYear(cleaned);
+    setNewSchoolYearInput('');
+    setIsAddingSchoolYear(false);
+  };
+
   const createSingleUser = async (
     name: string, 
     userRole: 'student' | 'teacher', 
@@ -132,7 +316,7 @@ export default function AdminDashboard() {
     
     const randomSuffix = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
     const username = `${baseUsername}.${randomSuffix}`;
-    const email = `${username}@tuanlo.vn`;
+    const email = `${username}@lightedu.vn`;
     const password = '123456';
 
     let newUserUid = '';
@@ -157,7 +341,7 @@ export default function AdminDashboard() {
       // 2. Create profile in Firestore
       let grade: string | undefined = undefined;
       if (userRole === 'student' && classId) {
-        const cls = classes.find(c => c.id === classId);
+        const cls = classesInYear.find(c => c.id === classId) || classes.find(c => c.id === classId);
         if (cls) {
           const match = cls.name.match(/Lớp\s*([1-5])/i);
           if (match && match[1]) {
@@ -175,11 +359,12 @@ export default function AdminDashboard() {
         email: newUserEmail,
         displayName: name,
         role: userRole,
+        schoolYear: selectedSchoolYear,
         classId: userRole === 'student' ? classId : undefined,
         grade: userRole === 'student' ? grade : undefined,
-        schoolName: userRole === 'student' ? studentSchool : undefined,
-        communeName: userRole === 'student' ? studentCommune : undefined,
-        provinceName: userRole === 'student' ? studentProvince : undefined,
+        schoolName: studentSchool?.trim() || undefined,
+        communeName: studentCommune?.trim() || undefined,
+        provinceName: studentProvince?.trim() || undefined,
         allowedGrades: userRole === 'student' ? finalAllowedGrades : undefined,
         allowedSubjects: userRole === 'teacher' ? (teacherAllowedSubjects && teacherAllowedSubjects.length > 0 ? teacherAllowedSubjects : undefined) : undefined,
         allowedClassIds: userRole === 'teacher' ? (teacherAllowedClassIds && teacherAllowedClassIds.length > 0 ? teacherAllowedClassIds : undefined) : undefined,
@@ -208,16 +393,16 @@ export default function AdminDashboard() {
         setError('Vui lòng chọn lớp cho học sinh');
         return;
       }
-      if (!schoolName.trim()) {
-        setError('Vui lòng nhập tên trường');
+      if (!provinceName.trim()) {
+        setError('Vui lòng chọn tên tỉnh');
         return;
       }
       if (!communeName.trim()) {
-        setError('Vui lòng nhập tên xã');
+        setError('Vui lòng chọn tên xã / phường');
         return;
       }
-      if (!provinceName.trim()) {
-        setError('Vui lòng nhập tên tỉnh');
+      if (!schoolName.trim()) {
+        setError('Vui lòng chọn tên trường');
         return;
       }
     }
@@ -241,7 +426,7 @@ export default function AdminDashboard() {
       setDisplayName('');
       setSchoolName('');
       setCommuneName('');
-      setProvinceName('');
+      setProvinceName(DEFAULT_PROVINCE);
       setSelectedGrades([]);
       setSelectedTeacherSubjects([]);
       setSelectedTeacherClassIds([]);
@@ -260,16 +445,16 @@ export default function AdminDashboard() {
         setError('Vui lòng chọn lớp cho học sinh');
         return;
       }
-      if (!bulkSchoolName.trim()) {
-        setError('Vui lòng nhập tên trường cho danh sách học sinh');
+      if (!bulkProvinceName.trim()) {
+        setError('Vui lòng chọn tên tỉnh cho danh sách học sinh');
         return;
       }
       if (!bulkCommuneName.trim()) {
-        setError('Vui lòng nhập tên xã cho danh sách học sinh');
+        setError('Vui lòng chọn tên xã / phường cho danh sách học sinh');
         return;
       }
-      if (!bulkProvinceName.trim()) {
-        setError('Vui lòng nhập tên tỉnh cho danh sách học sinh');
+      if (!bulkSchoolName.trim()) {
+        setError('Vui lòng chọn tên trường cho danh sách học sinh');
         return;
       }
     }
@@ -301,7 +486,7 @@ export default function AdminDashboard() {
     setBulkNames('');
     setBulkSchoolName('');
     setBulkCommuneName('');
-    setBulkProvinceName('');
+    setBulkProvinceName(DEFAULT_PROVINCE);
     setBulkSelectedGrades([]);
     setBulkSelectedTeacherSubjects([]);
     setBulkSelectedTeacherClassIds([]);
@@ -384,6 +569,7 @@ export default function AdminDashboard() {
   const handleStartEditUser = (user: UserProfile) => {
     setEditingUser(user);
     setEditDisplayName(user.displayName || '');
+    setEditSchoolYear(user.schoolYear || DEFAULT_SCHOOL_YEAR);
     setEditClassId(user.classId || '');
     setEditSchoolName(user.schoolName || '');
     setEditCommuneName(user.communeName || '');
@@ -406,6 +592,10 @@ export default function AdminDashboard() {
       try {
         const updatedProfile: Partial<UserProfile> = {
           displayName: editDisplayName,
+          schoolYear: editSchoolYear,
+          provinceName: editProvinceName.trim(),
+          communeName: editCommuneName.trim(),
+          schoolName: editSchoolName.trim(),
           allowedSubjects: editAllowedSubjects,
           allowedClassIds: editAllowedClassIds
         };
@@ -429,16 +619,16 @@ export default function AdminDashboard() {
       alert('Vui lòng chọn lớp học');
       return;
     }
-    if (!editSchoolName.trim()) {
-      alert('Vui lòng nhập tên trường');
+    if (!editProvinceName.trim()) {
+      alert('Vui lòng chọn tên tỉnh');
       return;
     }
     if (!editCommuneName.trim()) {
-      alert('Vui lòng nhập tên xã');
+      alert('Vui lòng chọn tên xã / phường');
       return;
     }
-    if (!editProvinceName.trim()) {
-      alert('Vui lòng nhập tên tỉnh');
+    if (!editSchoolName.trim()) {
+      alert('Vui lòng chọn tên trường');
       return;
     }
 
@@ -458,6 +648,7 @@ export default function AdminDashboard() {
 
       const updatedProfile: Partial<UserProfile> = {
         displayName: editDisplayName,
+        schoolYear: editSchoolYear,
         classId: editClassId,
         grade: grade,
         schoolName: editSchoolName,
@@ -485,17 +676,111 @@ export default function AdminDashboard() {
     setIsCreatingClass(true);
     try {
       const classId = Math.random().toString(36).substring(2, 8).toUpperCase();
-      await setDoc(doc(db, 'classes', classId), {
-        name: newClassName,
-        teacherId: auth.currentUser?.uid || 'admin'
-      });
+      const trimmedName = newClassName.trim();
+      const inheritedTopics =
+        selectedSchoolYear === TARGET_INHERIT_SCHOOL_YEAR
+          ? getInheritedCustomTopicsForClass(trimmedName, classes, SOURCE_TOPICS_SCHOOL_YEAR)
+          : {};
+      const hasInherited = hasAnyCustomTopics(inheritedTopics);
+
+      await setDoc(doc(db, 'classes', classId), cleanFirestoreData({
+        name: trimmedName,
+        teacherId: auth.currentUser?.uid || 'admin',
+        schoolYear: selectedSchoolYear,
+        customTopics: hasInherited ? inheritedTopics : undefined
+      }));
       setNewClassName('');
-      alert(`Đã tạo lớp ${newClassName} thành công! Mã lớp: ${classId}`);
+      alert(
+        hasInherited
+          ? `Đã tạo lớp ${trimmedName} (Năm học ${selectedSchoolYear}) và tự động kế thừa chủ đề từ năm học ${SOURCE_TOPICS_SCHOOL_YEAR}! Mã lớp: ${classId}`
+          : `Đã tạo lớp ${trimmedName} (Năm học ${selectedSchoolYear}) thành công! Mã lớp: ${classId}`
+      );
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'classes');
     } finally {
       setIsCreatingClass(false);
     }
+  };
+
+  const handleSyncTopicsFrom2025 = async () => {
+    const classes2025WithTopics = classes.filter(
+      c => (c.schoolYear || DEFAULT_SCHOOL_YEAR) === SOURCE_TOPICS_SCHOOL_YEAR && hasAnyCustomTopics(c.customTopics)
+    );
+
+    if (classes2025WithTopics.length === 0) {
+      alert(`Năm học ${SOURCE_TOPICS_SCHOOL_YEAR} chưa có chủ đề tự tạo nào để đồng bộ.`);
+      return;
+    }
+
+    setIsSyncingTopicsFrom2025(true);
+    try {
+      let updatedCount = 0;
+      let createdCount = 0;
+
+      // 1. Update all existing classes in selectedSchoolYear with matching 2025-2026 topics
+      for (const cls of classesInYear) {
+        const inherited = getInheritedCustomTopicsForClass(cls.name, classes, SOURCE_TOPICS_SCHOOL_YEAR);
+        if (!hasAnyCustomTopics(inherited)) continue;
+        const merged = mergeCustomTopicsMaps([cls.customTopics, inherited]);
+        await setDoc(doc(db, 'classes', cls.id), { customTopics: merged }, { merge: true });
+        updatedCount++;
+      }
+
+      // 2. If a 2025-2026 class with topics has no class of the same grade in selectedSchoolYear yet,
+      //    create a matching class in selectedSchoolYear carrying the exact same customTopics.
+      const existingGradesInTarget = new Set(
+        classesInYear.map(c => extractGradeDigit(c.name) || c.name.toLowerCase().trim())
+      );
+
+      for (const srcCls of classes2025WithTopics) {
+        const key = extractGradeDigit(srcCls.name) || srcCls.name.toLowerCase().trim();
+        if (existingGradesInTarget.has(key)) continue;
+
+        const newId = Math.random().toString(36).substring(2, 8).toUpperCase();
+        await setDoc(doc(db, 'classes', newId), {
+          name: srcCls.name,
+          teacherId: srcCls.teacherId || auth.currentUser?.uid || 'admin',
+          schoolYear: selectedSchoolYear,
+          customTopics: srcCls.customTopics || {}
+        });
+        existingGradesInTarget.add(key);
+        createdCount++;
+      }
+
+      if (updatedCount === 0 && createdCount === 0) {
+        alert(`Chủ đề lớp năm học ${selectedSchoolYear} đã đồng bộ đầy đủ với năm học ${SOURCE_TOPICS_SCHOOL_YEAR}.`);
+      } else {
+        const parts: string[] = [];
+        if (updatedCount > 0) parts.push(`cập nhật chủ đề cho ${updatedCount} lớp`);
+        if (createdCount > 0) parts.push(`tạo mới ${createdCount} lớp kèm chủ đề`);
+        alert(`Đã đồng bộ chủ đề từ Năm học ${SOURCE_TOPICS_SCHOOL_YEAR} sang ${selectedSchoolYear}: ${parts.join(', ')}!`);
+      }
+    } catch (error) {
+      console.error('Error syncing custom topics from 2025-2026:', error);
+      alert('Lỗi khi đồng bộ chủ đề từ năm học 2025-2026.');
+    } finally {
+      setIsSyncingTopicsFrom2025(false);
+    }
+  };
+
+  const handleDeleteClass = (cls: ClassRoom) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Xác nhận xóa lớp học',
+      message: `Bạn có chắc chắn muốn xóa lớp "${cls.name}" (Năm học ${cls.schoolYear || DEFAULT_SCHOOL_YEAR}) không?`,
+      onConfirm: async () => {
+        try {
+          await deleteDoc(doc(db, 'classes', cls.id));
+          if (selectedClassFilter === cls.id) setSelectedClassFilter('all');
+          if (selectedClassId === cls.id) setSelectedClassId('');
+          if (bulkClassId === cls.id) setBulkClassId('');
+          if (selectedTopicClassId === cls.id) setSelectedTopicClassId('');
+        } catch (err) {
+          console.error('Error deleting class:', err);
+          alert('Lỗi khi xóa lớp học');
+        }
+      }
+    });
   };
 
   const handleAddCustomTopic = async () => {
@@ -576,11 +861,11 @@ export default function AdminDashboard() {
     setConfirmModal({
       isOpen: true,
       title: 'Xóa toàn bộ chủ đề tự tạo',
-      message: 'Bạn có chắc chắn muốn xóa TOÀN BỘ chủ đề tự tạo của tất cả các lớp học không? Hành động này không thể hoàn tác.',
+      message: `Bạn có chắc chắn muốn xóa TOÀN BỘ chủ đề tự tạo của tất cả các lớp học trong Năm học ${selectedSchoolYear} không? Hành động này không thể hoàn tác.`,
       onConfirm: async () => {
         setLoading(true);
         try {
-          const classesWithTopics = classes.filter(cls => {
+          const classesWithTopics = classesInYear.filter(cls => {
             if (!cls.customTopics) return false;
             return Object.entries(cls.customTopics).some(
               ([_, topics]) => Array.isArray(topics) && topics.length > 0
@@ -588,7 +873,7 @@ export default function AdminDashboard() {
           });
 
           if (classesWithTopics.length === 0) {
-            alert('Không có chủ đề tự tạo nào để xóa!');
+            alert(`Không có chủ đề tự tạo nào trong Năm học ${selectedSchoolYear} để xóa!`);
             setLoading(false);
             return;
           }
@@ -600,7 +885,7 @@ export default function AdminDashboard() {
           );
 
           await Promise.all(promises);
-          alert('Đã xóa thành công toàn bộ chủ đề tự tạo!');
+          alert(`Đã xóa thành công toàn bộ chủ đề tự tạo của Năm học ${selectedSchoolYear}!`);
         } catch (error) {
           console.error('Error deleting all custom topics:', error);
           alert('Lỗi khi xóa toàn bộ chủ đề');
@@ -671,43 +956,41 @@ export default function AdminDashboard() {
   };
 
   const handleDeleteAll = () => {
-    const deletableUsers = users.filter(u => u.role !== 'admin');
+    const deletableUsers = usersInYear;
     if (deletableUsers.length === 0) return;
+    const uidsToDelete = deletableUsers.map(u => u.uid);
     setConfirmModal({
       isOpen: true,
-      title: 'Xác nhận xóa tất cả người dùng',
-      message: `Bạn có đồng ý xóa toàn bộ ${deletableUsers.length} tài khoản người dùng không?`,
+      title: `Xác nhận xóa tài khoản Năm học ${selectedSchoolYear}`,
+      message: `Bạn có đồng ý xóa toàn bộ ${deletableUsers.length} tài khoản người dùng thuộc Năm học ${selectedSchoolYear} không?`,
       onConfirm: async () => {
         setLoading(true);
         try {
-          const uids = deletableUsers.map(u => u.uid);
           const response = await fetch('/api/admin/delete-users', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uids }),
+            body: JSON.stringify({ uids: uidsToDelete }),
           });
           if (response.ok) {
-            setUsers(prev => prev.filter(u => u.role === 'admin'));
+            setUsers(prev => prev.filter(u => !uidsToDelete.includes(u.uid)));
             setSelectedUserIds([]);
-            alert('Đã xóa tất cả tài khoản người dùng thành công!');
+            alert(`Đã xóa tất cả tài khoản Năm học ${selectedSchoolYear} thành công!`);
           } else {
             console.warn('Server-side bulk deletion failed, using client-side fallback...');
-            const promises = uids.map(uid => deleteDoc(doc(db, 'users', uid)));
+            const promises = uidsToDelete.map(uid => deleteDoc(doc(db, 'users', uid)));
             await Promise.all(promises);
-            setUsers(prev => prev.filter(u => u.role === 'admin'));
+            setUsers(prev => prev.filter(u => !uidsToDelete.includes(u.uid)));
             setSelectedUserIds([]);
-            alert('Đã xóa tất cả tài khoản người dùng thành công (dự phòng)!');
+            alert(`Đã xóa tất cả tài khoản Năm học ${selectedSchoolYear} thành công (dự phòng)!`);
           }
         } catch (error) {
           console.error('Error deleting all users, trying client-side fallback:', error);
           try {
-            const deletableUsers = users.filter(u => u.role !== 'admin');
-            const uids = deletableUsers.map(u => u.uid);
-            const promises = uids.map(uid => deleteDoc(doc(db, 'users', uid)));
+            const promises = uidsToDelete.map(uid => deleteDoc(doc(db, 'users', uid)));
             await Promise.all(promises);
-            setUsers(prev => prev.filter(u => u.role === 'admin'));
+            setUsers(prev => prev.filter(u => !uidsToDelete.includes(u.uid)));
             setSelectedUserIds([]);
-            alert('Đã xóa tất cả tài khoản người dùng thành công (dự phòng)!');
+            alert(`Đã xóa tất cả tài khoản Năm học ${selectedSchoolYear} thành công (dự phòng)!`);
           } catch (clientErr) {
             console.error('Client-side fallback also failed:', clientErr);
             alert('Có lỗi xảy ra khi xóa các tài khoản. Vui lòng thử lại!');
@@ -779,50 +1062,149 @@ export default function AdminDashboard() {
     });
   };
 
-  const filteredUsers = users.filter(u => {
+  // Automatically migrate any existing @tuanlo.vn accounts in Firestore to @lightedu.vn
+  const hasAttemptedDomainMigrationRef = React.useRef(false);
+  useEffect(() => {
+    if (hasAttemptedDomainMigrationRef.current || users.length === 0) return;
+    const legacyUsers = users.filter(u => u.email && /@tuanlo\.vn$/i.test(u.email));
+    if (legacyUsers.length === 0) return;
+    hasAttemptedDomainMigrationRef.current = true;
+
+    (async () => {
+      for (const u of legacyUsers) {
+        const updatedEmail = u.email.replace(/@tuanlo\.vn$/i, '@lightedu.vn');
+        try {
+          await updateDoc(doc(db, 'users', u.uid), { email: updatedEmail });
+        } catch (err) {
+          console.warn(`Could not migrate email for user ${u.uid}:`, err);
+        }
+      }
+      try {
+        await fetch('/api/admin/migrate-email-domain', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            users: legacyUsers.map(u => ({
+              uid: u.uid,
+              email: u.email.replace(/@tuanlo\.vn$/i, '@lightedu.vn')
+            }))
+          })
+        });
+      } catch {
+        // Non-blocking best-effort Firebase Auth email sync
+      }
+    })();
+  }, [users]);
+
+  const filterProvinceOptions = useMemo(() => {
+    const base = new Set<string>(getProvinces());
+    usersInYear.forEach(u => {
+      if (u.provinceName?.trim()) base.add(u.provinceName.trim());
+    });
+    return Array.from(base).sort((a, b) => a.localeCompare(b, 'vi'));
+  }, [usersInYear]);
+
+  const filterCommuneOptions = useMemo(() => {
+    if (selectedProvinceFilter === 'all') return [];
+    const base = new Set<string>(getCommunesByProvince(selectedProvinceFilter));
+    usersInYear.forEach(u => {
+      if (
+        u.provinceName &&
+        normalizeViSearch(u.provinceName) === normalizeViSearch(selectedProvinceFilter) &&
+        u.communeName?.trim()
+      ) {
+        base.add(u.communeName.trim());
+      }
+    });
+    return Array.from(base).sort((a, b) => a.localeCompare(b, 'vi'));
+  }, [selectedProvinceFilter, usersInYear]);
+
+  const filterSchoolOptions = useMemo(() => {
+    if (selectedProvinceFilter === 'all' || selectedCommuneFilter === 'all') return [];
+    const base = new Set<string>(getSchoolsByCommune(selectedProvinceFilter, selectedCommuneFilter));
+    usersInYear.forEach(u => {
+      if (
+        u.provinceName &&
+        u.communeName &&
+        normalizeViSearch(u.provinceName) === normalizeViSearch(selectedProvinceFilter) &&
+        normalizeViSearch(u.communeName) === normalizeViSearch(selectedCommuneFilter) &&
+        u.schoolName?.trim()
+      ) {
+        base.add(u.schoolName.trim());
+      }
+    });
+    return Array.from(base).sort((a, b) => a.localeCompare(b, 'vi'));
+  }, [selectedProvinceFilter, selectedCommuneFilter, usersInYear]);
+
+  const matchesLocationFilters = (u: UserProfile) => {
+    const matchesProvince =
+      selectedProvinceFilter === 'all' ||
+      (Boolean(u.provinceName) && normalizeViSearch(u.provinceName!) === normalizeViSearch(selectedProvinceFilter));
+    const matchesCommune =
+      selectedCommuneFilter === 'all' ||
+      (Boolean(u.communeName) && normalizeViSearch(u.communeName!) === normalizeViSearch(selectedCommuneFilter));
+    const matchesSchool =
+      selectedSchoolFilter === 'all' ||
+      (Boolean(u.schoolName) && normalizeViSearch(u.schoolName!) === normalizeViSearch(selectedSchoolFilter));
+    return matchesProvince && matchesCommune && matchesSchool;
+  };
+
+  const filteredUsers = usersInYear.filter(u => {
     const matchesRole = selectedRoleFilter === 'all' || u.role === selectedRoleFilter;
     const matchesClass = selectedClassFilter === 'all' || u.classId === selectedClassFilter;
-    const username = u.email ? u.email.replace('@tuanlo.vn', '') : '';
-    const searchLower = searchTerm.toLowerCase().trim();
-    const matchesSearch = !searchLower || (
-      u.email.toLowerCase().includes(searchLower) || 
-      (u.displayName && u.displayName.toLowerCase().includes(searchLower)) ||
-      username.toLowerCase().includes(searchLower) ||
-      (u.classId && u.classId.toLowerCase().includes(searchLower))
+    const matchesLocation = matchesLocationFilters(u);
+    const normalizedEmail = u.email ? u.email.replace(/@tuanlo\.vn$/i, '@lightedu.vn') : '';
+    const username = normalizedEmail ? normalizedEmail.replace(/@lightedu\.vn$/i, '') : '';
+    const searchNorm = normalizeViSearch(searchTerm);
+    const matchesSearch = !searchNorm || (
+      normalizeViSearch(normalizedEmail).includes(searchNorm) || 
+      (u.displayName && normalizeViSearch(u.displayName).includes(searchNorm)) ||
+      normalizeViSearch(username).includes(searchNorm) ||
+      (u.classId && normalizeViSearch(u.classId).includes(searchNorm)) ||
+      (u.schoolName && normalizeViSearch(u.schoolName).includes(searchNorm)) ||
+      (u.communeName && normalizeViSearch(u.communeName).includes(searchNorm)) ||
+      (u.provinceName && normalizeViSearch(u.provinceName).includes(searchNorm))
     );
-    return matchesRole && matchesClass && matchesSearch;
+    return matchesRole && matchesClass && matchesLocation && matchesSearch;
   });
 
   const handleExportStudentAccountsExcel = () => {
-    // Export student accounts matching current class/role/search filter
-    const studentList = users.filter(u => {
+    // Export student accounts matching current school year, location, class & search filter
+    const studentList = usersInYear.filter(u => {
       if (u.role !== 'student') return false;
       const matchesClass = selectedClassFilter === 'all' || u.classId === selectedClassFilter;
-      const username = u.email ? u.email.replace('@tuanlo.vn', '') : '';
-      const searchLower = searchTerm.toLowerCase().trim();
-      const matchesSearch = !searchLower || (
-        u.email.toLowerCase().includes(searchLower) || 
-        (u.displayName && u.displayName.toLowerCase().includes(searchLower)) ||
-        username.toLowerCase().includes(searchLower)
+      const matchesLocation = matchesLocationFilters(u);
+      const normalizedEmail = u.email ? u.email.replace(/@tuanlo\.vn$/i, '@lightedu.vn') : '';
+      const username = normalizedEmail ? normalizedEmail.replace(/@lightedu\.vn$/i, '') : '';
+      const searchNorm = normalizeViSearch(searchTerm);
+      const matchesSearch = !searchNorm || (
+        normalizeViSearch(normalizedEmail).includes(searchNorm) || 
+        (u.displayName && normalizeViSearch(u.displayName).includes(searchNorm)) ||
+        normalizeViSearch(username).includes(searchNorm) ||
+        (u.schoolName && normalizeViSearch(u.schoolName).includes(searchNorm)) ||
+        (u.communeName && normalizeViSearch(u.communeName).includes(searchNorm)) ||
+        (u.provinceName && normalizeViSearch(u.provinceName).includes(searchNorm))
       );
-      return matchesClass && matchesSearch;
+      return matchesClass && matchesLocation && matchesSearch;
     });
 
     if (studentList.length === 0) {
-      alert('Không tìm thấy tài khoản học sinh nào để xuất file Excel!');
+      alert(`Không tìm thấy tài khoản học sinh nào trong Năm học ${selectedSchoolYear} để xuất file Excel!`);
       return;
     }
 
     const data = studentList.map((u, index) => {
-      const className = classes.find(c => c.id === u.classId)?.name || u.classId || 'Chưa xếp lớp';
-      const username = u.email ? u.email.replace('@tuanlo.vn', '') : '---';
+      const className = classesInYear.find(c => c.id === u.classId)?.name || classes.find(c => c.id === u.classId)?.name || u.classId || 'Chưa xếp lớp';
+      const normalizedEmail = u.email ? u.email.replace(/@tuanlo\.vn$/i, '@lightedu.vn') : '';
+      const username = normalizedEmail ? normalizedEmail.replace(/@lightedu\.vn$/i, '') : '---';
       const password = (u as any).password || '123456';
       return {
         'STT': index + 1,
+        'Năm học': u.schoolYear || selectedSchoolYear,
         'Họ và tên học sinh': u.displayName || 'Chưa cập nhật',
         'Lớp': className,
         'Tên đăng nhập / Mã HS': username,
-        'Email đăng nhập': u.email || '---',
+        'Email đăng nhập': normalizedEmail || '---',
         'Mật khẩu': password,
         'Trường học': u.schoolName || '---',
         'Xã/Phường': u.communeName || '---',
@@ -834,6 +1216,7 @@ export default function AdminDashboard() {
 
     worksheet['!cols'] = [
       { wch: 6 },  // STT
+      { wch: 13 }, // Năm học
       { wch: 25 }, // Họ tên
       { wch: 15 }, // Lớp
       { wch: 25 }, // Tên đăng nhập
@@ -847,10 +1230,10 @@ export default function AdminDashboard() {
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, "Tai_Khoan_Hoc_Sinh");
 
-    const selectedClassName = classes.find(c => c.id === selectedClassFilter)?.name || selectedClassFilter;
+    const selectedClassName = classesInYear.find(c => c.id === selectedClassFilter)?.name || selectedClassFilter;
     const fileName = selectedClassFilter !== 'all'
-      ? `Danh_sach_tai_khoan_hoc_sinh_Lop_${selectedClassName.replace(/\s+/g, '_')}.xlsx`
-      : `Danh_sach_tai_khoan_hoc_sinh_${new Date().toLocaleDateString('vi-VN').replace(/\//g, '-')}.xlsx`;
+      ? `Danh_sach_tai_khoan_hoc_sinh_${selectedSchoolYear}_Lop_${selectedClassName.replace(/\s+/g, '_')}.xlsx`
+      : `Danh_sach_tai_khoan_hoc_sinh_${selectedSchoolYear}.xlsx`;
 
     XLSX.writeFile(workbook, fileName);
   };
@@ -877,18 +1260,116 @@ export default function AdminDashboard() {
         </div>
       </div>
 
+      {/* School Year Selector Bar */}
+      <div className="bg-gradient-to-r from-indigo-950 via-slate-900 to-emerald-950 text-white p-5 rounded-3xl shadow-xl border border-indigo-900/40 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div className="flex items-start sm:items-center gap-3.5">
+          <div className="w-12 h-12 rounded-2xl bg-amber-400/20 border border-amber-400/30 flex items-center justify-center text-amber-300 shrink-0">
+            <Calendar className="w-6 h-6" />
+          </div>
+          <div>
+            <p className="text-[10px] font-mono uppercase tracking-widest text-amber-300 font-bold">Quản lý theo năm học</p>
+            <h3 className="text-base sm:text-lg font-extrabold text-white mt-0.5">
+              Năm học đang chọn: <span className="text-amber-300">{selectedSchoolYear}</span>
+            </h3>
+            <p className="text-xs text-stone-300 mt-0.5">
+              Toàn bộ lớp học, tài khoản giáo viên và học sinh chỉ hiển thị đúng theo năm học đang chọn.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="flex items-center gap-2">
+            <select
+              value={selectedSchoolYear}
+              onChange={(e) => handleChangeSchoolYear(e.target.value)}
+              className="px-4 py-2.5 rounded-xl bg-white text-stone-900 font-extrabold text-sm outline-none focus:ring-2 focus:ring-amber-400 shadow-md cursor-pointer min-w-[175px]"
+              aria-label="Chọn năm học"
+            >
+              {availableSchoolYears.map(year => (
+                <option key={year} value={year}>
+                  Năm học {year}
+                </option>
+              ))}
+            </select>
+
+            {!isAddingSchoolYear ? (
+              <button
+                type="button"
+                onClick={() => setIsAddingSchoolYear(true)}
+                className="px-3 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shrink-0"
+                title="Thêm năm học mới"
+              >
+                <Plus className="w-4 h-4 text-amber-300" />
+                <span>Thêm năm học</span>
+              </button>
+            ) : (
+              <div className="flex items-center gap-1.5 bg-white/10 p-1 rounded-xl border border-white/20">
+                <input
+                  type="text"
+                  placeholder="2030-2031"
+                  value={newSchoolYearInput}
+                  onChange={(e) => setNewSchoolYearInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddSchoolYear();
+                    }
+                  }}
+                  className="w-28 px-2.5 py-1.5 rounded-lg bg-white text-stone-900 text-xs font-bold outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddSchoolYear}
+                  className="px-2.5 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-300 text-stone-950 text-xs font-extrabold cursor-pointer"
+                >
+                  Lưu
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsAddingSchoolYear(false);
+                    setNewSchoolYearInput('');
+                  }}
+                  className="p-1.5 text-stone-300 hover:text-white cursor-pointer"
+                  title="Hủy"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="px-3 py-1.5 rounded-xl bg-purple-500/20 border border-purple-400/30 text-purple-200 font-bold">
+              {classesInYear.length} lớp học
+            </span>
+            <span className="px-3 py-1.5 rounded-xl bg-blue-500/20 border border-blue-400/30 text-blue-200 font-bold">
+              {teacherCountInYear} giáo viên
+            </span>
+            <span className="px-3 py-1.5 rounded-xl bg-emerald-500/20 border border-emerald-400/30 text-emerald-200 font-bold">
+              {studentCountInYear} học sinh
+            </span>
+          </div>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8">
         {/* Create User Form */}
         <div className="lg:col-span-1 space-y-6 md:space-y-8">
-          {/* Create Class Form */}
-          <div className="bg-white p-5 md:p-6 rounded-2xl border border-stone-200 shadow-sm">
-            <h3 className="text-base md:text-lg font-bold text-stone-900 mb-4 md:mb-6 flex items-center gap-2">
-              <School className="w-4 h-4 md:w-5 md:h-5 text-purple-600" />
-              Tạo lớp học mới
-            </h3>
+          {/* Create Class Form & Class List for Selected School Year */}
+          <div className="bg-white p-5 md:p-6 rounded-2xl border border-stone-200 shadow-sm space-y-5">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-base md:text-lg font-bold text-stone-900 flex items-center gap-2">
+                <School className="w-4 h-4 md:w-5 md:h-5 text-purple-600" />
+                Lớp học
+              </h3>
+              <span className="text-[10px] font-mono font-bold px-2.5 py-1 rounded-full bg-purple-50 text-purple-700 border border-purple-100">
+                NH {selectedSchoolYear}
+              </span>
+            </div>
             <form onSubmit={handleCreateClass} className="space-y-4">
               <div className="space-y-1">
-                <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Tên lớp học</label>
+                <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Tên lớp học mới</label>
                 <input 
                   type="text" 
                   placeholder="Ví dụ: Lớp 5A1"
@@ -901,19 +1382,65 @@ export default function AdminDashboard() {
               <button 
                 type="submit"
                 disabled={isCreatingClass}
-                className="w-full py-3 bg-purple-600 text-white font-bold rounded-xl hover:bg-purple-700 disabled:bg-stone-200 transition-all flex items-center justify-center gap-2 shadow-md"
+                className="w-full py-3 bg-purple-600 text-white font-bold rounded-xl hover:bg-purple-700 disabled:bg-stone-200 transition-all flex items-center justify-center gap-2 shadow-md cursor-pointer"
               >
                 {isCreatingClass ? <Loader2 className="w-4 h-4 animate-spin" /> : <School className="w-4 h-4" />}
-                Tạo lớp học
+                Tạo lớp học ({selectedSchoolYear})
               </button>
             </form>
+
+            {/* List of Created Classes in Selected School Year */}
+            <div className="pt-4 border-t border-stone-100 space-y-2.5">
+              <p className="text-[10px] font-mono uppercase tracking-widest text-stone-500 font-bold">
+                Danh sách lớp Năm học {selectedSchoolYear} ({classesInYear.length})
+              </p>
+              {classesInYear.length === 0 ? (
+                <div className="p-4 rounded-xl bg-stone-50 border border-dashed border-stone-200 text-center">
+                  <p className="text-xs text-stone-400 italic">
+                    Chưa có lớp học nào trong Năm học {selectedSchoolYear}.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+                  {classesInYear.map(cls => {
+                    const studentsInCls = usersInYear.filter(u => u.role === 'student' && u.classId === cls.id).length;
+                    return (
+                      <div
+                        key={cls.id}
+                        className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-purple-50/40 border border-purple-100 text-xs"
+                      >
+                        <div className="min-w-0">
+                          <p className="font-bold text-stone-900 truncate">{cls.name}</p>
+                          <p className="text-[10px] text-stone-500 font-mono">
+                            Mã: {cls.id} • {studentsInCls} HS
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteClass(cls)}
+                          className="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors shrink-0 cursor-pointer"
+                          title="Xóa lớp học"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="bg-white p-5 md:p-6 rounded-2xl border border-stone-200 shadow-sm">
-            <h3 className="text-base md:text-lg font-bold text-stone-900 mb-4 md:mb-6 flex items-center gap-2">
-              <UserPlus className="w-4 h-4 md:w-5 md:h-5 text-emerald-600" />
-              Cấp tài khoản mới
-            </h3>
+            <div className="flex items-center justify-between gap-2 mb-4 md:mb-6">
+              <h3 className="text-base md:text-lg font-bold text-stone-900 flex items-center gap-2">
+                <UserPlus className="w-4 h-4 md:w-5 md:h-5 text-emerald-600" />
+                Cấp tài khoản mới
+              </h3>
+              <span className="text-[10px] font-mono font-bold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
+                NH {selectedSchoolYear}
+              </span>
+            </div>
 
             <form onSubmit={handleCreateUser} className="space-y-4">
               <div className="grid grid-cols-2 gap-2">
@@ -962,49 +1489,24 @@ export default function AdminDashboard() {
                         className="w-full pl-10 pr-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500 appearance-none bg-white"
                         required
                       >
-                        <option value="">-- Chọn lớp --</option>
-                        {classes.map(cls => (
+                        <option value="">-- Chọn lớp ({selectedSchoolYear}) --</option>
+                        {classesInYear.map(cls => (
                           <option key={cls.id} value={cls.id}>{cls.name}</option>
                         ))}
                       </select>
                     </div>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Tên trường</label>
-                    <input 
-                      type="text" 
-                      placeholder="Trường Tiểu học..."
-                      value={schoolName}
-                      onChange={(e) => setSchoolName(e.target.value)}
-                      className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Tên xã</label>
-                    <input 
-                      type="text" 
-                      placeholder="Xã..."
-                      value={communeName}
-                      onChange={(e) => setCommuneName(e.target.value)}
-                      className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Tên tỉnh</label>
-                    <input 
-                      type="text" 
-                      placeholder="Tỉnh..."
-                      value={provinceName}
-                      onChange={(e) => setProvinceName(e.target.value)}
-                      className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
-                      required
-                    />
-                  </div>
+                  <LocationSchoolSelector
+                    provinceName={provinceName}
+                    communeName={communeName}
+                    schoolName={schoolName}
+                    onProvinceChange={setProvinceName}
+                    onCommuneChange={setCommuneName}
+                    onSchoolChange={setSchoolName}
+                    required={true}
+                    accent="emerald"
+                  />
 
                   <div className="space-y-2 border border-stone-100 p-3 rounded-xl bg-stone-50">
                     <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 block mb-1">
@@ -1035,6 +1537,22 @@ export default function AdminDashboard() {
 
               {role === 'teacher' && (
                 <div className="space-y-4">
+                  {/* Địa bàn công tác (Tùy chọn) */}
+                  <div className="space-y-3 border border-stone-100 p-3.5 rounded-xl bg-stone-50/70">
+                    <p className="text-[10px] font-mono uppercase tracking-widest text-stone-500 font-bold">
+                      Đơn vị công tác (Tùy chọn)
+                    </p>
+                    <LocationSchoolSelector
+                      provinceName={provinceName}
+                      communeName={communeName}
+                      schoolName={schoolName}
+                      onProvinceChange={setProvinceName}
+                      onCommuneChange={setCommuneName}
+                      onSchoolChange={setSchoolName}
+                      required={false}
+                      accent="blue"
+                    />
+                  </div>
                   {/* Phân công môn dạy */}
                   <div className="space-y-2 border border-stone-100 p-3.5 rounded-xl bg-stone-50">
                     <div className="flex items-center justify-between mb-1">
@@ -1081,29 +1599,29 @@ export default function AdminDashboard() {
                   <div className="space-y-2 border border-stone-100 p-3.5 rounded-xl bg-stone-50">
                     <div className="flex items-center justify-between mb-1">
                       <label className="text-[10px] font-mono uppercase tracking-widest text-stone-500 font-bold block">
-                        Phân công lớp dạy ({classes.length} lớp)
+                        Phân công lớp dạy ({classesInYear.length} lớp • {selectedSchoolYear})
                       </label>
-                      {classes.length > 0 && (
+                      {classesInYear.length > 0 && (
                         <button
                           type="button"
                           onClick={() => {
-                            if (selectedTeacherClassIds.length === classes.length) {
+                            if (selectedTeacherClassIds.length === classesInYear.length) {
                               setSelectedTeacherClassIds([]);
                             } else {
-                              setSelectedTeacherClassIds(classes.map(c => c.id));
+                              setSelectedTeacherClassIds(classesInYear.map(c => c.id));
                             }
                           }}
                           className="text-[10px] text-blue-600 font-bold hover:underline"
                         >
-                          {selectedTeacherClassIds.length === classes.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                          {selectedTeacherClassIds.length === classesInYear.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
                         </button>
                       )}
                     </div>
-                    {classes.length === 0 ? (
-                      <p className="text-[11px] text-amber-600 italic">Chưa có lớp nào trong danh sách. Hãy tạo lớp học trước.</p>
+                    {classesInYear.length === 0 ? (
+                      <p className="text-[11px] text-amber-600 italic">Chưa có lớp nào trong Năm học {selectedSchoolYear}. Hãy tạo lớp học trước.</p>
                     ) : (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs max-h-48 overflow-y-auto p-1">
-                        {classes.map(cls => (
+                        {classesInYear.map(cls => (
                           <label key={cls.id} className="flex items-center gap-2 cursor-pointer select-none text-stone-700 hover:text-stone-900 bg-white p-2 rounded-lg border border-stone-200 shadow-sm">
                             <input 
                               type="checkbox"
@@ -1122,7 +1640,7 @@ export default function AdminDashboard() {
                         ))}
                       </div>
                     )}
-                    <p className="text-[9px] text-stone-400 italic">Nếu không chọn lớp nào, giáo viên sẽ xem được tất cả các lớp.</p>
+                    <p className="text-[9px] text-stone-400 italic">Nếu không chọn lớp nào, giáo viên sẽ xem được tất cả các lớp trong năm học này.</p>
                   </div>
                 </div>
               )}
@@ -1144,10 +1662,15 @@ export default function AdminDashboard() {
 
           {/* Bulk Create Tool */}
           <div className="bg-white p-5 md:p-6 rounded-2xl border border-stone-200 shadow-sm">
-            <h3 className="text-base md:text-lg font-bold text-stone-900 mb-4 md:mb-6 flex items-center gap-2">
-              <FileText className="w-4 h-4 md:w-5 md:h-5 text-blue-600" />
-              Cấp tài khoản hàng loạt
-            </h3>
+            <div className="flex items-center justify-between gap-2 mb-4 md:mb-6">
+              <h3 className="text-base md:text-lg font-bold text-stone-900 flex items-center gap-2">
+                <FileText className="w-4 h-4 md:w-5 md:h-5 text-blue-600" />
+                Cấp tài khoản hàng loạt
+              </h3>
+              <span className="text-[10px] font-mono font-bold px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-100">
+                NH {selectedSchoolYear}
+              </span>
+            </div>
 
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-2">
@@ -1192,49 +1715,24 @@ export default function AdminDashboard() {
                         className="w-full pl-10 pr-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-blue-500 appearance-none bg-white"
                         required
                       >
-                        <option value="">-- Chọn lớp --</option>
-                        {classes.map(cls => (
+                        <option value="">-- Chọn lớp ({selectedSchoolYear}) --</option>
+                        {classesInYear.map(cls => (
                           <option key={cls.id} value={cls.id}>{cls.name}</option>
                         ))}
                       </select>
                     </div>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Tên trường</label>
-                    <input 
-                      type="text" 
-                      placeholder="Trường Tiểu học..."
-                      value={bulkSchoolName}
-                      onChange={(e) => setBulkSchoolName(e.target.value)}
-                      className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Tên xã</label>
-                    <input 
-                      type="text" 
-                      placeholder="Xã..."
-                      value={bulkCommuneName}
-                      onChange={(e) => setBulkCommuneName(e.target.value)}
-                      className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Tên tỉnh</label>
-                    <input 
-                      type="text" 
-                      placeholder="Tỉnh..."
-                      value={bulkProvinceName}
-                      onChange={(e) => setBulkProvinceName(e.target.value)}
-                      className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-blue-500"
-                      required
-                    />
-                  </div>
+                  <LocationSchoolSelector
+                    provinceName={bulkProvinceName}
+                    communeName={bulkCommuneName}
+                    schoolName={bulkSchoolName}
+                    onProvinceChange={setBulkProvinceName}
+                    onCommuneChange={setBulkCommuneName}
+                    onSchoolChange={setBulkSchoolName}
+                    required={true}
+                    accent="blue"
+                  />
 
                   <div className="space-y-2 border border-stone-100 p-3 rounded-xl bg-stone-50">
                     <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 block mb-1">
@@ -1265,6 +1763,22 @@ export default function AdminDashboard() {
 
               {bulkRole === 'teacher' && (
                 <div className="space-y-4">
+                  {/* Địa bàn công tác (Tùy chọn) */}
+                  <div className="space-y-3 border border-stone-100 p-3.5 rounded-xl bg-stone-50/70">
+                    <p className="text-[10px] font-mono uppercase tracking-widest text-stone-500 font-bold">
+                      Đơn vị công tác (Tùy chọn)
+                    </p>
+                    <LocationSchoolSelector
+                      provinceName={bulkProvinceName}
+                      communeName={bulkCommuneName}
+                      schoolName={bulkSchoolName}
+                      onProvinceChange={setBulkProvinceName}
+                      onCommuneChange={setBulkCommuneName}
+                      onSchoolChange={setBulkSchoolName}
+                      required={false}
+                      accent="blue"
+                    />
+                  </div>
                   {/* Phân công môn dạy */}
                   <div className="space-y-2 border border-stone-100 p-3.5 rounded-xl bg-stone-50">
                     <div className="flex items-center justify-between mb-1">
@@ -1311,29 +1825,29 @@ export default function AdminDashboard() {
                   <div className="space-y-2 border border-stone-100 p-3.5 rounded-xl bg-stone-50">
                     <div className="flex items-center justify-between mb-1">
                       <label className="text-[10px] font-mono uppercase tracking-widest text-stone-500 font-bold block">
-                        Phân công lớp dạy cho các giáo viên này ({classes.length} lớp)
+                        Phân công lớp dạy ({classesInYear.length} lớp • {selectedSchoolYear})
                       </label>
-                      {classes.length > 0 && (
+                      {classesInYear.length > 0 && (
                         <button
                           type="button"
                           onClick={() => {
-                            if (bulkSelectedTeacherClassIds.length === classes.length) {
+                            if (bulkSelectedTeacherClassIds.length === classesInYear.length) {
                               setBulkSelectedTeacherClassIds([]);
                             } else {
-                              setBulkSelectedTeacherClassIds(classes.map(c => c.id));
+                              setBulkSelectedTeacherClassIds(classesInYear.map(c => c.id));
                             }
                           }}
                           className="text-[10px] text-blue-600 font-bold hover:underline"
                         >
-                          {bulkSelectedTeacherClassIds.length === classes.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                          {bulkSelectedTeacherClassIds.length === classesInYear.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
                         </button>
                       )}
                     </div>
-                    {classes.length === 0 ? (
-                      <p className="text-[11px] text-amber-600 italic">Chưa có lớp nào trong danh sách. Hãy tạo lớp học trước.</p>
+                    {classesInYear.length === 0 ? (
+                      <p className="text-[11px] text-amber-600 italic">Chưa có lớp nào trong Năm học {selectedSchoolYear}. Hãy tạo lớp học trước.</p>
                     ) : (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs max-h-48 overflow-y-auto p-1">
-                        {classes.map(cls => (
+                        {classesInYear.map(cls => (
                           <label key={cls.id} className="flex items-center gap-2 cursor-pointer select-none text-stone-700 hover:text-stone-900 bg-white p-2 rounded-lg border border-stone-200 shadow-sm">
                             <input 
                               type="checkbox"
@@ -1352,7 +1866,7 @@ export default function AdminDashboard() {
                         ))}
                       </div>
                     )}
-                    <p className="text-[9px] text-stone-400 italic">Nếu không chọn lớp nào, giáo viên sẽ xem được tất cả các lớp.</p>
+                    <p className="text-[9px] text-stone-400 italic">Nếu không chọn lớp nào, giáo viên sẽ xem được tất cả các lớp trong năm học này.</p>
                   </div>
                 </div>
               )}
@@ -1418,8 +1932,8 @@ export default function AdminDashboard() {
                     }}
                     className="w-full pl-10 pr-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
                   >
-                    <option value="">-- Chọn lớp học --</option>
-                    {classes.map(cls => (
+                    <option value="">-- Chọn lớp học ({selectedSchoolYear}) --</option>
+                    {classesInYear.map(cls => (
                       <option key={cls.id} value={cls.id}>{cls.name}</option>
                     ))}
                   </select>
@@ -1504,9 +2018,12 @@ export default function AdminDashboard() {
             <div className="flex flex-col gap-4 mb-6 md:mb-8">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="space-y-1">
-                  <h3 className="text-base md:text-lg font-bold text-stone-900 flex items-center gap-2">
+                  <h3 className="text-base md:text-lg font-bold text-stone-900 flex items-center gap-2 flex-wrap">
                     <Users className="w-4 h-4 md:w-5 md:h-5 text-blue-600" />
-                    Danh sách tài khoản ({filteredUsers.length}/{users.length})
+                    <span>Danh sách tài khoản ({filteredUsers.length}/{usersInYear.length})</span>
+                    <span className="text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">
+                      Năm học {selectedSchoolYear}
+                    </span>
                   </h3>
                   {selectedUserIds.length > 0 && (
                     <p className="text-[10px] font-bold text-blue-600 animate-pulse">
@@ -1534,52 +2051,126 @@ export default function AdminDashboard() {
                   )}
                   <button 
                     onClick={handleDeleteAll}
-                    className="flex items-center gap-2 px-3 py-2 bg-stone-900 text-white rounded-lg text-[10px] font-bold hover:bg-stone-800 transition-all"
+                    disabled={usersInYear.length === 0}
+                    className="flex items-center gap-2 px-3 py-2 bg-stone-900 text-white rounded-lg text-[10px] font-bold hover:bg-stone-800 disabled:bg-stone-300 transition-all"
                   >
                     <Trash2 className="w-3 h-3" />
-                    Xóa tất cả
+                    Xóa tất cả ({selectedSchoolYear})
                   </button>
                 </div>
               </div>
 
               {/* Filter Controls Bar */}
-              <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-stone-100">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-stone-600">
-                  <span>Lọc theo lớp:</span>
+              <div className="space-y-2.5 pt-3 border-t border-stone-100">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-stone-600">
+                    <span>Lọc theo lớp:</span>
+                    <select
+                      value={selectedClassFilter}
+                      onChange={(e) => setSelectedClassFilter(e.target.value)}
+                      className="px-3 py-1.5 rounded-lg border border-stone-200 text-xs font-bold bg-white outline-none focus:ring-2 focus:ring-emerald-500"
+                    >
+                      <option value="all">-- Tất cả các lớp ({classesInYear.length}) --</option>
+                      {classesInYear.map(cls => (
+                        <option key={cls.id} value={cls.id}>{cls.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-stone-600">
+                    <span>Vai trò:</span>
+                    <select
+                      value={selectedRoleFilter}
+                      onChange={(e) => setSelectedRoleFilter(e.target.value as any)}
+                      className="px-3 py-1.5 rounded-lg border border-stone-200 text-xs font-bold bg-white outline-none focus:ring-2 focus:ring-emerald-500"
+                    >
+                      <option value="all">Tất cả vai trò</option>
+                      <option value="student">Học sinh</option>
+                      <option value="teacher">Giáo viên</option>
+                    </select>
+                  </div>
+
+                  <div className="relative flex-1 min-w-[180px]">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-stone-400" />
+                    <input 
+                      type="text" 
+                      placeholder="Tìm tên, TK, trường, xã..."
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                      className="pl-9 pr-3 py-1.5 rounded-lg border border-stone-200 text-xs outline-none focus:ring-2 focus:ring-emerald-500 w-full bg-white"
+                    />
+                  </div>
+                </div>
+
+                {/* Cascading Location Filter: Tỉnh -> Xã/Phường -> Trường */}
+                <div className="flex flex-wrap items-center gap-2 bg-stone-50/80 p-2.5 rounded-xl border border-stone-100">
+                  <span className="text-[10px] font-mono uppercase tracking-wider font-bold text-stone-500 flex items-center gap-1 mr-1">
+                    <MapPin className="w-3 h-3 text-emerald-600" />
+                    Địa bàn:
+                  </span>
                   <select
-                    value={selectedClassFilter}
-                    onChange={(e) => setSelectedClassFilter(e.target.value)}
-                    className="px-3 py-1.5 rounded-lg border border-stone-200 text-xs font-bold bg-white outline-none focus:ring-2 focus:ring-emerald-500"
+                    value={selectedProvinceFilter}
+                    onChange={(e) => {
+                      setSelectedProvinceFilter(e.target.value);
+                      setSelectedCommuneFilter('all');
+                      setSelectedSchoolFilter('all');
+                    }}
+                    className="px-2.5 py-1.5 rounded-lg border border-stone-200 text-xs font-semibold bg-white outline-none focus:ring-2 focus:ring-emerald-500"
                   >
-                    <option value="all">-- Tất cả các lớp --</option>
-                    {classes.map(cls => (
-                      <option key={cls.id} value={cls.id}>{cls.name}</option>
+                    <option value="all">-- Tất cả tỉnh --</option>
+                    {filterProvinceOptions.map(prov => (
+                      <option key={prov} value={prov}>{prov}</option>
                     ))}
                   </select>
-                </div>
 
-                <div className="flex items-center gap-1.5 text-xs font-bold text-stone-600">
-                  <span>Vai trò:</span>
                   <select
-                    value={selectedRoleFilter}
-                    onChange={(e) => setSelectedRoleFilter(e.target.value as any)}
-                    className="px-3 py-1.5 rounded-lg border border-stone-200 text-xs font-bold bg-white outline-none focus:ring-2 focus:ring-emerald-500"
+                    value={selectedCommuneFilter}
+                    onChange={(e) => {
+                      setSelectedCommuneFilter(e.target.value);
+                      setSelectedSchoolFilter('all');
+                    }}
+                    disabled={selectedProvinceFilter === 'all'}
+                    className="px-2.5 py-1.5 rounded-lg border border-stone-200 text-xs font-semibold bg-white outline-none focus:ring-2 focus:ring-emerald-500 disabled:bg-stone-100 disabled:text-stone-400 max-w-[200px]"
                   >
-                    <option value="all">Tất cả vai trò</option>
-                    <option value="student">Học sinh</option>
-                    <option value="teacher">Giáo viên</option>
+                    <option value="all">
+                      {selectedProvinceFilter === 'all'
+                        ? '-- Chọn tỉnh trước --'
+                        : `-- Tất cả xã/phường (${filterCommuneOptions.length}) --`}
+                    </option>
+                    {filterCommuneOptions.map(comm => (
+                      <option key={comm} value={comm}>{comm}</option>
+                    ))}
                   </select>
-                </div>
 
-                <div className="relative flex-1 min-w-[180px]">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-stone-400" />
-                  <input 
-                    type="text" 
-                    placeholder="Tìm tên, TK, email..."
-                    value={searchTerm}
-                    onChange={(e) => setSearchTerm(e.target.value)}
-                    className="pl-9 pr-3 py-1.5 rounded-lg border border-stone-200 text-xs outline-none focus:ring-2 focus:ring-emerald-500 w-full bg-white"
-                  />
+                  <select
+                    value={selectedSchoolFilter}
+                    onChange={(e) => setSelectedSchoolFilter(e.target.value)}
+                    disabled={selectedCommuneFilter === 'all'}
+                    className="px-2.5 py-1.5 rounded-lg border border-stone-200 text-xs font-semibold bg-white outline-none focus:ring-2 focus:ring-emerald-500 disabled:bg-stone-100 disabled:text-stone-400 flex-1 min-w-[180px] max-w-[280px]"
+                  >
+                    <option value="all">
+                      {selectedCommuneFilter === 'all'
+                        ? '-- Chọn xã/phường trước --'
+                        : `-- Tất cả trường (${filterSchoolOptions.length}) --`}
+                    </option>
+                    {filterSchoolOptions.map(sch => (
+                      <option key={sch} value={sch}>{sch}</option>
+                    ))}
+                  </select>
+
+                  {(selectedProvinceFilter !== 'all' || selectedCommuneFilter !== 'all' || selectedSchoolFilter !== 'all') && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedProvinceFilter('all');
+                        setSelectedCommuneFilter('all');
+                        setSelectedSchoolFilter('all');
+                      }}
+                      className="text-[11px] font-bold text-stone-500 hover:text-red-600 px-2 py-1 rounded-lg hover:bg-white transition-colors"
+                    >
+                      Xóa lọc
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
@@ -1612,8 +2203,10 @@ export default function AdminDashboard() {
                     </tr>
                   ) : filteredUsers.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="py-8 text-center text-stone-400 italic text-sm">
-                        Không tìm thấy người dùng nào
+                      <td colSpan={6} className="py-10 text-center text-stone-400 italic text-sm">
+                        {usersInYear.length === 0
+                          ? `Chưa có tài khoản giáo viên hoặc học sinh nào trong Năm học ${selectedSchoolYear}.`
+                          : 'Không tìm thấy người dùng nào phù hợp bộ lọc.'}
                       </td>
                     </tr>
                   ) : (
@@ -1637,7 +2230,7 @@ export default function AdminDashboard() {
                             <div>
                               <p className="text-xs md:text-sm font-bold text-stone-900">{u.displayName}</p>
                               <div className="flex flex-wrap items-center gap-1.5 text-[10px] md:text-xs text-stone-500 font-mono mt-0.5">
-                                <span>TK: {u.email.replace('@tuanlo.vn', '')}</span>
+                                <span>TK: {u.email.replace(/@(lightedu|tuanlo)\.vn$/i, '')}</span>
                                 <span className="text-stone-300">•</span>
                                 <span className="text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded font-sans font-bold flex items-center gap-1" title="Mật khẩu">
                                   <Key className="w-2.5 h-2.5 text-emerald-600" />
@@ -1657,9 +2250,12 @@ export default function AdminDashboard() {
                             <p className="font-bold text-stone-700">
                               {u.classId ? (classes.find(c => c.id === u.classId)?.name || u.classId) : '---'}
                             </p>
-                            {u.role === 'student' && (u.schoolName || u.communeName || u.provinceName) && (
-                              <p className="text-[10px] text-stone-400 truncate max-w-[150px]" title={`${u.schoolName}, ${u.communeName}, ${u.provinceName}`}>
-                                {u.schoolName && `${u.schoolName}`}{u.communeName && `, ${u.communeName}`}{u.provinceName && `, ${u.provinceName}`}
+                            {(u.schoolName || u.communeName || u.provinceName) && (
+                              <p
+                                className="text-[10px] text-stone-400 truncate max-w-[180px]"
+                                title={[u.provinceName, u.communeName, u.schoolName].filter(Boolean).join(' • ')}
+                              >
+                                {[u.schoolName, u.communeName, u.provinceName].filter(Boolean).join(', ')}
                               </p>
                             )}
                           </div>
@@ -1740,43 +2336,145 @@ export default function AdminDashboard() {
           {/* Custom Topics List Grouped by Class and Subject */}
           <div className="bg-white p-4 md:p-8 rounded-2xl border border-stone-200 shadow-sm">
             {(() => {
-              const classesWithTopics = classes.filter(cls => {
-                if (!cls.customTopics) return false;
-                return Object.entries(cls.customTopics).some(
-                  ([_, topics]) => Array.isArray(topics) && topics.length > 0
-                );
-              });
+              const classesWithTopics = classesInYear.filter(cls => hasAnyCustomTopics(cls.customTopics));
+              const classes2025WithTopics = classes.filter(
+                cls =>
+                  (cls.schoolYear || DEFAULT_SCHOOL_YEAR) === SOURCE_TOPICS_SCHOOL_YEAR &&
+                  hasAnyCustomTopics(cls.customTopics)
+              );
+              const isInheritYear = selectedSchoolYear === TARGET_INHERIT_SCHOOL_YEAR;
+              // Identify 2025-2026 classes whose grade isn't yet explicitly configured in 2026-2027
+              const configuredGradesInTarget = new Set(
+                classesInYear
+                  .filter(c => c.customTopics !== undefined)
+                  .map(c => extractGradeDigit(c.name) || c.name.toLowerCase().trim())
+              );
+              const inheritedFallbackClasses = isInheritYear
+                ? classes2025WithTopics.filter(srcCls => {
+                    const key = extractGradeDigit(srcCls.name) || srcCls.name.toLowerCase().trim();
+                    return !configuredGradesInTarget.has(key);
+                  })
+                : [];
 
               return (
                 <>
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
                     <div className="space-y-1">
-                      <h3 className="text-base md:text-lg font-bold text-stone-900 flex items-center gap-2">
+                      <h3 className="text-base md:text-lg font-bold text-stone-900 flex items-center gap-2 flex-wrap">
                         <BookOpenCheck className="w-4 h-4 md:w-5 md:h-5 text-indigo-600" />
-                        Danh sách chủ đề tự tạo của từng lớp & môn học
+                        <span>Danh sách chủ đề tự tạo của từng lớp & môn học</span>
+                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-100">
+                          NH {selectedSchoolYear}
+                        </span>
                       </h3>
                       <p className="text-xs text-stone-500 font-semibold">
-                        Xem chi tiết và xóa các chủ đề tự tạo của từng lớp, từng môn học.
+                        {isInheritYear
+                          ? `Năm học ${TARGET_INHERIT_SCHOOL_YEAR} tự động áp dụng chủ đề lớp giống Năm học ${SOURCE_TOPICS_SCHOOL_YEAR}.`
+                          : `Xem chi tiết và xóa các chủ đề tự tạo của từng lớp trong Năm học ${selectedSchoolYear}.`}
                       </p>
                     </div>
-                    {classesWithTopics.length > 0 && (
-                      <button
-                        onClick={handleDeleteAllCustomTopics}
-                        className="px-4 py-2 bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 rounded-xl text-xs font-bold transition-all flex items-center gap-2 self-start sm:self-center cursor-pointer"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                        Xóa tất cả chủ đề tự tạo
-                      </button>
-                    )}
+                    <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
+                      {isInheritYear && classes2025WithTopics.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={handleSyncTopicsFrom2025}
+                          disabled={isSyncingTopicsFrom2025}
+                          className="px-4 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-xl text-xs font-bold transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+                        >
+                          {isSyncingTopicsFrom2025 ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Copy className="w-4 h-4" />
+                          )}
+                          Đồng bộ chủ đề từ {SOURCE_TOPICS_SCHOOL_YEAR}
+                        </button>
+                      )}
+                      {classesWithTopics.length > 0 && (
+                        <button
+                          onClick={handleDeleteAllCustomTopics}
+                          className="px-4 py-2 bg-red-50 text-red-600 hover:bg-red-100 border border-red-200 rounded-xl text-xs font-bold transition-all flex items-center gap-2 cursor-pointer"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          Xóa tất cả chủ đề tự tạo
+                        </button>
+                      )}
+                    </div>
                   </div>
 
-                  {classesWithTopics.length === 0 ? (
+                  {classesWithTopics.length === 0 && inheritedFallbackClasses.length === 0 ? (
                     <div className="text-center py-10 bg-stone-50 rounded-xl border border-dashed border-stone-200">
-                      <p className="text-xs text-stone-400 italic">Chưa có chủ đề tự thêm nào cho các lớp học.</p>
+                      <p className="text-xs text-stone-400 italic">Chưa có chủ đề tự thêm nào cho các lớp học trong Năm học {selectedSchoolYear}.</p>
                       <p className="text-[10px] text-stone-400 mt-1">Sử dụng mục "Thêm chủ đề cho lớp" bên trái để tạo chủ đề.</p>
                     </div>
                   ) : (
                     <div className="space-y-6">
+                      {inheritedFallbackClasses.length > 0 && (
+                        <div className="space-y-4">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-4 py-3 rounded-xl bg-indigo-50/70 border border-indigo-100">
+                            <p className="text-xs font-bold text-indigo-800">
+                              Đang áp dụng tự động {inheritedFallbackClasses.length} lớp chủ đề từ Năm học {SOURCE_TOPICS_SCHOOL_YEAR} cho Năm học {TARGET_INHERIT_SCHOOL_YEAR}
+                            </p>
+                            <span className="text-[10px] font-mono font-bold text-indigo-600">
+                              Học sinh {TARGET_INHERIT_SCHOOL_YEAR} đã thấy ngay các chủ đề này
+                            </span>
+                          </div>
+                          {inheritedFallbackClasses.map((cls) => {
+                            const subjectsWithTopics = Object.entries(cls.customTopics || {}).filter(
+                              ([_, topics]) => Array.isArray(topics) && topics.length > 0
+                            ) as [Subject, string[]][];
+
+                            return (
+                              <div key={`inherited-${cls.id}`} className="p-4 rounded-xl border border-indigo-100 bg-indigo-50/20 space-y-4">
+                                <div className="flex items-center gap-2 pb-2 border-b border-indigo-100 flex-wrap">
+                                  <School className="w-4 h-4 text-indigo-600" />
+                                  <h4 className="text-sm font-extrabold text-stone-900">
+                                    {cls.name}
+                                  </h4>
+                                  <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-100 px-2 py-0.5 rounded-full font-bold">
+                                    Kế thừa từ {SOURCE_TOPICS_SCHOOL_YEAR}
+                                  </span>
+                                  <span className="text-[10px] bg-purple-50 text-purple-600 px-2 py-0.5 rounded-full font-bold">
+                                    {subjectsWithTopics.length} môn học
+                                  </span>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                  {subjectsWithTopics.map(([subj, topics]) => {
+                                    const isMath = subj.startsWith('Toán');
+                                    const isVietnamese = subj.startsWith('Tiếng Việt') || subj.startsWith('Ngữ văn');
+                                    const badgeColor = isMath
+                                      ? 'bg-blue-100 text-blue-800'
+                                      : isVietnamese
+                                        ? 'bg-emerald-100 text-emerald-800'
+                                        : 'bg-purple-100 text-purple-800';
+
+                                    return (
+                                      <div key={subj} className="p-3 rounded-lg border border-stone-200 bg-white flex flex-col justify-between space-y-3 shadow-sm">
+                                        <div className="flex items-center justify-between">
+                                          <span className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded ${badgeColor}`}>
+                                            {subj}
+                                          </span>
+                                          <span className="text-[10px] text-stone-400 font-bold">
+                                            {topics.length} chủ đề
+                                          </span>
+                                        </div>
+
+                                        <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
+                                          {topics.map((topic, index) => (
+                                            <div key={index} className="flex items-center justify-between text-xs bg-stone-50 px-2.5 py-1.5 rounded border border-stone-100">
+                                              <span className="text-stone-700 font-medium truncate pr-2">{topic}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                       {classesWithTopics.map((cls) => {
                         const subjectsWithTopics = Object.entries(cls.customTopics || {}).filter(
                           ([_, topics]) => Array.isArray(topics) && topics.length > 0
@@ -1867,7 +2565,28 @@ export default function AdminDashboard() {
             </div>
 
             <form onSubmit={handleUpdateUser} className="p-6 overflow-y-auto space-y-4">
-              {editingUser.role === 'teacher' ? (
+              {/* Năm học của tài khoản */}
+              <div className="space-y-1">
+                <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Năm học</label>
+                <select
+                  value={editSchoolYear}
+                  onChange={(e) => {
+                    const nextYear = e.target.value;
+                    setEditSchoolYear(nextYear);
+                    setEditClassId('');
+                    setEditAllowedClassIds([]);
+                  }}
+                  className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm font-bold outline-none focus:ring-2 focus:ring-emerald-500 bg-white"
+                >
+                  {availableSchoolYears.map(yr => (
+                    <option key={yr} value={yr}>Năm học {yr}</option>
+                  ))}
+                </select>
+              </div>
+
+              {(() => {
+                const editYearClasses = classes.filter(c => (c.schoolYear || DEFAULT_SCHOOL_YEAR) === editSchoolYear);
+                return editingUser.role === 'teacher' ? (
                 <>
                   <div className="space-y-1">
                     <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Họ và tên giáo viên</label>
@@ -1877,6 +2596,23 @@ export default function AdminDashboard() {
                       onChange={(e) => setEditDisplayName(e.target.value)}
                       className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
                       required
+                    />
+                  </div>
+
+                  {/* Đơn vị công tác (Tùy chọn) */}
+                  <div className="space-y-3 border border-stone-100 p-3.5 rounded-xl bg-stone-50/70">
+                    <p className="text-[10px] font-mono uppercase tracking-widest text-stone-500 font-bold">
+                      Đơn vị công tác (Tùy chọn)
+                    </p>
+                    <LocationSchoolSelector
+                      provinceName={editProvinceName}
+                      communeName={editCommuneName}
+                      schoolName={editSchoolName}
+                      onProvinceChange={setEditProvinceName}
+                      onCommuneChange={setEditCommuneName}
+                      onSchoolChange={setEditSchoolName}
+                      required={false}
+                      accent="blue"
                     />
                   </div>
 
@@ -1926,29 +2662,29 @@ export default function AdminDashboard() {
                   <div className="space-y-2 border border-stone-100 p-3.5 rounded-xl bg-stone-50">
                     <div className="flex items-center justify-between mb-1">
                       <label className="text-[10px] font-mono uppercase tracking-widest text-stone-500 font-bold block">
-                        Phân công lớp dạy ({classes.length} lớp)
+                        Phân công lớp dạy ({editYearClasses.length} lớp • {editSchoolYear})
                       </label>
-                      {classes.length > 0 && (
+                      {editYearClasses.length > 0 && (
                         <button
                           type="button"
                           onClick={() => {
-                            if (editAllowedClassIds.length === classes.length) {
+                            if (editAllowedClassIds.length === editYearClasses.length) {
                               setEditAllowedClassIds([]);
                             } else {
-                              setEditAllowedClassIds(classes.map(c => c.id));
+                              setEditAllowedClassIds(editYearClasses.map(c => c.id));
                             }
                           }}
                           className="text-[10px] text-blue-600 font-bold hover:underline"
                         >
-                          {editAllowedClassIds.length === classes.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
+                          {editAllowedClassIds.length === editYearClasses.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
                         </button>
                       )}
                     </div>
-                    {classes.length === 0 ? (
-                      <p className="text-[11px] text-amber-600 italic">Chưa có lớp nào trong danh sách. Hãy tạo lớp học trước.</p>
+                    {editYearClasses.length === 0 ? (
+                      <p className="text-[11px] text-amber-600 italic">Chưa có lớp nào trong Năm học {editSchoolYear}. Hãy tạo lớp học trước.</p>
                     ) : (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-xs max-h-44 overflow-y-auto p-1">
-                        {classes.map(cls => (
+                        {editYearClasses.map(cls => (
                           <label key={cls.id} className="flex items-center gap-2 cursor-pointer select-none text-stone-700 hover:text-stone-900 bg-white p-2 rounded-lg border border-stone-200 shadow-sm">
                             <input 
                               type="checkbox"
@@ -1967,7 +2703,7 @@ export default function AdminDashboard() {
                         ))}
                       </div>
                     )}
-                    <p className="text-[9px] text-stone-400 italic">Nếu không chọn lớp nào, giáo viên sẽ xem được tất cả các lớp.</p>
+                    <p className="text-[9px] text-stone-400 italic">Nếu không chọn lớp nào, giáo viên sẽ xem được tất cả các lớp trong năm học này.</p>
                   </div>
                 </>
               ) : (
@@ -1984,7 +2720,7 @@ export default function AdminDashboard() {
                   </div>
 
                   <div className="space-y-1">
-                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Lớp học</label>
+                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Lớp học ({editSchoolYear})</label>
                     <select 
                       value={editClassId}
                       onChange={(e) => setEditClassId(e.target.value)}
@@ -1992,44 +2728,22 @@ export default function AdminDashboard() {
                       required
                     >
                       <option value="">-- Chọn lớp --</option>
-                      {classes.map(cls => (
+                      {editYearClasses.map(cls => (
                         <option key={cls.id} value={cls.id}>{cls.name}</option>
                       ))}
                     </select>
                   </div>
 
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Tên trường</label>
-                    <input 
-                      type="text" 
-                      value={editSchoolName}
-                      onChange={(e) => setEditSchoolName(e.target.value)}
-                      className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Tên xã</label>
-                    <input 
-                      type="text" 
-                      value={editCommuneName}
-                      onChange={(e) => setEditCommuneName(e.target.value)}
-                      className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 ml-2">Tên tỉnh</label>
-                    <input 
-                      type="text" 
-                      value={editProvinceName}
-                      onChange={(e) => setEditProvinceName(e.target.value)}
-                      className="w-full px-4 py-3 rounded-xl border border-stone-200 text-sm outline-none focus:ring-2 focus:ring-emerald-500"
-                      required
-                    />
-                  </div>
+                  <LocationSchoolSelector
+                    provinceName={editProvinceName}
+                    communeName={editCommuneName}
+                    schoolName={editSchoolName}
+                    onProvinceChange={setEditProvinceName}
+                    onCommuneChange={setEditCommuneName}
+                    onSchoolChange={setEditSchoolName}
+                    required={true}
+                    accent="emerald"
+                  />
 
                   <div className="space-y-2 border border-stone-100 p-3 rounded-xl bg-stone-50">
                     <label className="text-[10px] font-mono uppercase tracking-widest text-stone-400 block mb-1">
@@ -2056,7 +2770,8 @@ export default function AdminDashboard() {
                     </div>
                   </div>
                 </>
-              )}
+              );
+              })()}
 
               <div className="flex gap-3 pt-2">
                 <button 

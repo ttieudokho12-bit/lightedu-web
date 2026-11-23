@@ -7,12 +7,13 @@ import {
   TrendingUp, Award, BookOpenCheck, Bookmark, Flame, Coins, Target, GraduationCap, Crown,
   Volume2, VolumeX, Bot, Star, Smile, Wand2, Heart, PartyPopper
 } from 'lucide-react';
-import { Subject, SUBJECTS, Assignment, UserProfile, QuizResult, PronunciationResult, PREDEFINED_TOPICS, ClassRoom } from '../types';
+import { Subject, SUBJECTS, Assignment, UserProfile, QuizResult, PronunciationResult, PREDEFINED_TOPICS, ClassRoom, DEFAULT_SCHOOL_YEAR, DEFAULT_USER_SCHOOL_YEAR, buildAvailableSchoolYears } from '../types';
 import { db, auth, parseDate } from '../firebase';
 import { signOut } from 'firebase/auth';
 import { collection, query, where, onSnapshot, doc, updateDoc, getDocs, orderBy, limit, setDoc } from 'firebase/firestore';
 import { analyzeStudentPerformance, getStudyAdvice } from '../services/gemini';
 import { formatMathSymbols } from '../services/mathUtils';
+import { getEffectiveCustomTopicsForStudent } from '../utils/classTopicsSync';
 import Markdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -31,9 +32,13 @@ import studentSidebarIllustrationJpg from '../assets/images/student_laptop_sideb
 
 interface StudentDashboardProps {
   userProfile: UserProfile;
+  selectedSchoolYear?: string;
+  onChangeSchoolYear?: (year: string) => void;
   onSelectSubject: (subject: Subject, topic?: string, count?: number, difficulty?: string, englishPercent?: number) => void;
   onSelectAssignment: (assignment: Assignment) => void;
   onViewHistory: () => void;
+  initialTab?: StudentTab;
+  onOpenSharedExam?: (examIdOrUrl: string) => void;
 }
 
 // Cute illustrations for selection screen matching mock
@@ -285,7 +290,16 @@ SUBJECTS.forEach((subject) => {
   }
 });
 
-export default function StudentDashboard({ userProfile, onSelectSubject, onSelectAssignment, onViewHistory }: StudentDashboardProps) {
+export default function StudentDashboard({ userProfile, selectedSchoolYear: selectedSchoolYearProp, onChangeSchoolYear: onChangeSchoolYearProp, onSelectSubject, onSelectAssignment, onViewHistory, initialTab, onOpenSharedExam }: StudentDashboardProps) {
+  // School year selection (defaults to 2026-2027 when not explicitly chosen)
+  const [internalSchoolYear, setInternalSchoolYear] = useState<string>(selectedSchoolYearProp || DEFAULT_USER_SCHOOL_YEAR);
+  const activeSchoolYear = selectedSchoolYearProp || internalSchoolYear;
+
+  const handleSelectSchoolYear = (year: string) => {
+    setInternalSchoolYear(year);
+    onChangeSchoolYearProp?.(year);
+  };
+
   // Grade and class handling
   const [studentGrade, setStudentGrade] = useState<string>(userProfile.grade || 'Lớp 2');
   const [className, setClassName] = useState<string>('');
@@ -309,40 +323,18 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
     const fetchAllCustomTopics = async () => {
       try {
         const classesSnap = await getDocs(collection(db, 'classes'));
-        const customTopicsMap: Record<string, string[]> = {};
-        
-        classesSnap.docs.forEach(doc => {
-          const data = doc.data();
-          const className = data.name || '';
-          
-          // Check if this class is relevant to any allowed grade
-          const isAllowed = allowedGradesList.some(grade => {
-            const g = grade.toLowerCase();
-            const c = className.toLowerCase();
-            if (c.includes(g) || g.includes(c)) return true;
-            
-            const gMatch = g.match(/([1-9])/);
-            const cMatch = c.match(/([1-9])/);
-            return gMatch && cMatch && gMatch[1] === cMatch[1];
-          });
-          
-          if (isAllowed || doc.id === userProfile.classId) {
-            const custom = data.customTopics || {};
-            Object.keys(custom).forEach((subj) => {
-              if (Array.isArray(custom[subj])) {
-                if (!customTopicsMap[subj]) {
-                  customTopicsMap[subj] = [];
-                }
-                custom[subj].forEach((topic: string) => {
-                  if (!customTopicsMap[subj].includes(topic)) {
-                    customTopicsMap[subj].push(topic);
-                  }
-                });
-              }
-            });
-          }
-        });
-        
+        const allClasses: ClassRoom[] = classesSnap.docs.map(d => ({
+          id: d.id,
+          ...(d.data() as Omit<ClassRoom, 'id'>),
+        }));
+
+        const customTopicsMap = getEffectiveCustomTopicsForStudent(
+          allClasses,
+          activeSchoolYear,
+          allowedGradesList,
+          userProfile.classId
+        );
+
         setClassCustomTopics(customTopicsMap);
       } catch (err) {
         console.error("Error fetching custom topics for allowed grades:", err);
@@ -352,18 +344,25 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
     if (allowedGradesList.length > 0) {
       fetchAllCustomTopics();
     }
-  }, [JSON.stringify(allowedGradesList), userProfile.classId]);
+  }, [JSON.stringify(allowedGradesList), userProfile.classId, activeSchoolYear]);
 
   const visibleSubjects = SUBJECTS.filter(subject => 
     allowedGradesList.some(grade => subject.includes(grade))
   );
 
-  const [activeTab, setActiveTab] = useState<StudentTab>('de-kiem-tra');
+  const [activeTab, setActiveTab] = useState<StudentTab>(initialTab || 'de-kiem-tra');
+
+  useEffect(() => {
+    if (initialTab) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab]);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [rawAssignments, setRawAssignments] = useState<Assignment[]>([]);
   const [assignmentSubjectFilter, setAssignmentSubjectFilter] = useState<string>('Tất cả');
-  const [results, setResults] = useState<QuizResult[]>([]);
+  const [rawResults, setRawResults] = useState<QuizResult[]>([]);
   const [classCode, setClassCode] = useState('');
+  const [sharedExamCodeInput, setSharedExamCodeInput] = useState('');
   const [isJoining, setIsJoining] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<string | null>(null);
@@ -371,16 +370,79 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
   const [copied, setCopied] = useState(false);
   const [isPlayingSpeech, setIsPlayingSpeech] = useState(false);
 
-  // States for dynamic leaderboard
-  const [allStudents, setAllStudents] = useState<UserProfile[]>([]);
-  const [allResults, setAllResults] = useState<QuizResult[]>([]);
-  const [pronunciationResults, setPronunciationResults] = useState<PronunciationResult[]>([]);
-  const [allClasses, setAllClasses] = useState<ClassRoom[]>([]);
+  // States for dynamic leaderboard (raw Firestore data, filtered by activeSchoolYear below)
+  const [rawAllStudents, setRawAllStudents] = useState<UserProfile[]>([]);
+  const [rawAllResults, setRawAllResults] = useState<QuizResult[]>([]);
+  const [rawPronunciationResults, setRawPronunciationResults] = useState<PronunciationResult[]>([]);
+  const [rawAllClasses, setRawAllClasses] = useState<ClassRoom[]>([]);
   const [leaderboardClassFilter, setLeaderboardClassFilter] = useState<string>('mine'); // Default to student's class
   const [leaderboardSubjectFilter, setLeaderboardSubjectFilter] = useState<string>('all');
   const [leaderboardSchoolFilter, setLeaderboardSchoolFilter] = useState<string>('mine'); // Default to student's school
   const [leaderboardTabMode, setLeaderboardTabMode] = useState<'quiz' | 'pronunciation'>('quiz');
   const [homeLeaderboardScope, setHomeLeaderboardScope] = useState<'all' | 'mine'>(userProfile.classId ? 'mine' : 'all');
+
+  const availableSchoolYears = React.useMemo(() => {
+    return buildAvailableSchoolYears([
+      activeSchoolYear,
+      userProfile.schoolYear,
+      ...rawAllClasses.map(c => c.schoolYear)
+    ]);
+  }, [activeSchoolYear, userProfile.schoolYear, rawAllClasses]);
+
+  const classYearMap = React.useMemo(() => {
+    const map = new Map<string, string>();
+    rawAllClasses.forEach(c => {
+      map.set(c.id, c.schoolYear || DEFAULT_SCHOOL_YEAR);
+    });
+    return map;
+  }, [rawAllClasses]);
+
+  const studentYearMap = React.useMemo(() => {
+    const map = new Map<string, string>();
+    rawAllStudents.forEach(s => {
+      map.set(s.uid, s.schoolYear || DEFAULT_SCHOOL_YEAR);
+    });
+    return map;
+  }, [rawAllStudents]);
+
+  const allClasses = React.useMemo(
+    () => rawAllClasses.filter(c => (c.schoolYear || DEFAULT_SCHOOL_YEAR) === activeSchoolYear),
+    [rawAllClasses, activeSchoolYear]
+  );
+
+  const allStudents = React.useMemo(
+    () => rawAllStudents.filter(s => (s.schoolYear || DEFAULT_SCHOOL_YEAR) === activeSchoolYear),
+    [rawAllStudents, activeSchoolYear]
+  );
+
+  const assignments = React.useMemo(
+    () => rawAssignments.filter(a => (a.schoolYear || classYearMap.get(a.classId) || DEFAULT_SCHOOL_YEAR) === activeSchoolYear),
+    [rawAssignments, classYearMap, activeSchoolYear]
+  );
+
+  const results = React.useMemo(
+    () => rawResults.filter(r => {
+      const year = r.schoolYear || (r.classId ? classYearMap.get(r.classId) : undefined) || DEFAULT_SCHOOL_YEAR;
+      return year === activeSchoolYear;
+    }),
+    [rawResults, classYearMap, activeSchoolYear]
+  );
+
+  const allResults = React.useMemo(
+    () => rawAllResults.filter(r => {
+      const year = r.schoolYear || (r.classId ? classYearMap.get(r.classId) : undefined) || studentYearMap.get(r.uid) || DEFAULT_SCHOOL_YEAR;
+      return year === activeSchoolYear;
+    }),
+    [rawAllResults, classYearMap, studentYearMap, activeSchoolYear]
+  );
+
+  const pronunciationResults = React.useMemo(
+    () => rawPronunciationResults.filter(p => {
+      const year = p.schoolYear || studentYearMap.get(p.uid) || DEFAULT_SCHOOL_YEAR;
+      return year === activeSchoolYear;
+    }),
+    [rawPronunciationResults, studentYearMap, activeSchoolYear]
+  );
 
   // Real-time listeners for the leaderboard
   useEffect(() => {
@@ -390,28 +452,28 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
     const qUsers = query(collection(db, 'users'));
     const unsubscribeUsers = onSnapshot(qUsers, (snapshot) => {
       const list = snapshot.docs.map(doc => doc.data() as UserProfile);
-      setAllStudents(list.filter(u => u.role === 'student'));
+      setRawAllStudents(list.filter(u => u.role === 'student'));
     });
 
     // Subscribe to all classes to display class names
     const qClasses = query(collection(db, 'classes'));
     const unsubscribeClasses = onSnapshot(qClasses, (snapshot) => {
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as ClassRoom));
-      setAllClasses(list);
+      setRawAllClasses(list);
     });
 
     // Subscribe to all quiz results to compile leaderboard points
     const qResults = query(collection(db, 'results'));
     const unsubscribeResults = onSnapshot(qResults, (snapshot) => {
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as QuizResult));
-      setAllResults(list);
+      setRawAllResults(list);
     });
 
     // Subscribe to pronunciation results for English Pronunciation Leaderboard
     const qPronunciation = query(collection(db, 'pronunciation_results'));
     const unsubscribePronunciation = onSnapshot(qPronunciation, (snapshot) => {
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PronunciationResult));
-      setPronunciationResults(list);
+      setRawPronunciationResults(list);
     }, (err) => {
       console.error("Error fetching pronunciation results:", err);
     });
@@ -1003,23 +1065,24 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
     const q = query(collection(db, 'assignments'), where('classId', '==', userProfile.classId));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Assignment));
-      setAssignments(list);
+      setRawAssignments(list);
     });
 
     return () => unsubscribe();
   }, [userProfile.classId]);
 
-  // Real-time listener for test results
+  // Real-time listener for test results (sort client-side so no composite index is required)
   useEffect(() => {
     if (!userProfile?.uid) return;
     const q = query(
       collection(db, 'results'),
-      where('uid', '==', userProfile.uid),
-      orderBy('timestamp', 'asc')
+      where('uid', '==', userProfile.uid)
     );
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as QuizResult));
-      setResults(list);
+      const list = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() } as QuizResult))
+        .sort((a, b) => parseDate(a.timestamp).getTime() - parseDate(b.timestamp).getTime());
+      setRawResults(list);
     }, (error) => {
       console.error('Error listening to results:', error);
     });
@@ -1077,15 +1140,25 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
 
   const handleLogout = () => {
     localStorage.removeItem('localUserSession');
+    if (userProfile?.uid) {
+      sessionStorage.removeItem(`selectedSchoolYear_${userProfile.uid}`);
+    }
+    sessionStorage.removeItem('activeSchoolYear');
     signOut(auth).then(() => {
       window.location.reload();
     });
   };
 
+  // Helper to normalize raw correct count to 10-point scale
+  const getNormalizedScore10 = (r: QuizResult) => {
+    const total = r.totalQuestions && r.totalQuestions > 0 ? r.totalQuestions : 10;
+    return parseFloat(((r.score / total) * 10).toFixed(1));
+  };
+
   // Compute stats based on real data
   const actualCompletedCount = results.length;
   const actualAverageScore = results.length > 0 
-    ? parseFloat((results.reduce((sum, r) => sum + r.score, 0) / results.length).toFixed(1))
+    ? parseFloat((results.reduce((sum, r) => sum + getNormalizedScore10(r), 0) / results.length).toFixed(1))
     : null;
 
   // Format line chart data
@@ -1105,11 +1178,10 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
     // Group results by month (for last 6 sessions or months)
     const recentResults = results.slice(-6);
     return recentResults.map((res, index) => {
-      const date = parseDate(res.timestamp);
       const label = `Lần ${index + 1}`;
       return {
         name: label,
-        score: parseFloat(res.score.toFixed(1))
+        score: getNormalizedScore10(res)
       };
     });
   };
@@ -1128,20 +1200,20 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
     return { rank: currentStudent.rank, total: list.length };
   };
 
-  const mathResults = results.filter(r => r.subject.startsWith('Toán'));
-  const vietResults = results.filter(r => r.subject === 'Tiếng Việt');
-  const engResults = results.filter(r => r.subject === 'Tiếng Anh');
+  const mathResults = results.filter(r => r.subject?.startsWith('Toán'));
+  const vietResults = results.filter(r => r.subject?.startsWith('Tiếng Việt') || r.subject?.startsWith('Ngữ văn'));
+  const engResults = results.filter(r => r.subject?.startsWith('Tiếng Anh'));
 
   const subjectAverages = {
-    'Toán': mathResults.reduce((acc, r) => acc + r.score, 0) / (mathResults.length || 1),
-    'Tiếng Việt': vietResults.reduce((acc, r) => acc + r.score, 0) / (vietResults.length || 1),
-    'Tiếng Anh': engResults.reduce((acc, r) => acc + r.score, 0) / (engResults.length || 1),
+    'Toán': mathResults.reduce((acc, r) => acc + getNormalizedScore10(r), 0) / (mathResults.length || 1),
+    'Tiếng Việt': vietResults.reduce((acc, r) => acc + getNormalizedScore10(r), 0) / (vietResults.length || 1),
+    'Tiếng Anh': engResults.reduce((acc, r) => acc + getNormalizedScore10(r), 0) / (engResults.length || 1),
   };
 
   const subjectsFeatured = [
     { name: 'Toán học', icon: Calculator, color: 'bg-blue-500', bgLight: 'bg-blue-50 text-blue-600', score: mathResults.length > 0 ? parseFloat(subjectAverages['Toán'].toFixed(1)) : 9.2 },
-    { name: 'Tiếng Việt', icon: BookOpen, color: 'bg-emerald-500', bgLight: 'bg-emerald-50 text-emerald-600', score: results.filter(r => r.subject === 'Tiếng Việt').length > 0 ? parseFloat(subjectAverages['Tiếng Việt'].toFixed(1)) : 8.4 },
-    { name: 'Tiếng Anh', icon: Languages, color: 'bg-amber-500', bgLight: 'bg-amber-50 text-amber-600', score: results.filter(r => r.subject === 'Tiếng Anh').length > 0 ? parseFloat(subjectAverages['Tiếng Anh'].toFixed(1)) : 8.8 },
+    { name: 'Tiếng Việt', icon: BookOpen, color: 'bg-emerald-500', bgLight: 'bg-emerald-50 text-emerald-600', score: vietResults.length > 0 ? parseFloat(subjectAverages['Tiếng Việt'].toFixed(1)) : 8.4 },
+    { name: 'Tiếng Anh', icon: Languages, color: 'bg-amber-500', bgLight: 'bg-amber-50 text-amber-600', score: engResults.length > 0 ? parseFloat(subjectAverages['Tiếng Anh'].toFixed(1)) : 8.8 },
     { name: 'Khoa học', icon: Sparkles, color: 'bg-purple-500', bgLight: 'bg-purple-50 text-purple-600', score: 8.1 }
   ];
 
@@ -1233,7 +1305,10 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                 <div className="p-4 sm:p-5 bg-stone-50/80 rounded-2xl border border-stone-200/60 text-center flex flex-col sm:flex-row items-center justify-center gap-3">
                   <CheckCircle className="w-5 h-5 text-[#00A66C] shrink-0" />
                   <p className="text-xs text-stone-600 font-medium">
-                    Hiện tại lớp <strong className="text-stone-800">{userProfile.classId}</strong> chưa có bài tập mới nào từ thầy cô. Hãy chọn bài bên dưới để tự ôn luyện nhé!
+                    Hiện tại lớp <strong className="text-stone-800">{className || userProfile.classId}</strong> chưa có bài tập nào trong <strong className="text-amber-700">Năm học {activeSchoolYear}</strong>.
+                    {rawAssignments.length > 0
+                      ? ' Bạn có thể đổi Năm học ở góc trên để xem bài tập của năm học khác.'
+                      : ' Hãy chọn bài bên dưới để tự ôn luyện nhé!'}
                   </p>
                 </div>
               ) : (
@@ -1256,8 +1331,20 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5 pt-1">
                     {assignments.slice(0, 6).map((assignment) => {
-                      const isCompleted = results.some(r => r.assignmentId === assignment.id);
-                      const myResult = results.find(r => r.assignmentId === assignment.id);
+                      const isCompleted = results.some(
+                        r =>
+                          r.assignmentId === assignment.id ||
+                          (assignment.templateId &&
+                            (r.sharedTemplateId === assignment.templateId ||
+                              r.assignmentId === `template_${assignment.templateId}`))
+                      );
+                      const myResult = results.find(
+                        r =>
+                          r.assignmentId === assignment.id ||
+                          (assignment.templateId &&
+                            (r.sharedTemplateId === assignment.templateId ||
+                              r.assignmentId === `template_${assignment.templateId}`))
+                      );
                       
                       return (
                         <div
@@ -1519,7 +1606,25 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
           </div>
 
           {/* Right Action blocks */}
-          <div className="flex items-center gap-3 md:gap-4">
+          <div className="flex items-center gap-2 sm:gap-3 md:gap-4">
+            {/* School Year Selector */}
+            <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200/90 px-2.5 sm:px-3 py-1.5 rounded-full text-amber-900 shadow-xs shrink-0">
+              <Calendar className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+              <select
+                value={activeSchoolYear}
+                onChange={(e) => handleSelectSchoolYear(e.target.value)}
+                className="bg-transparent text-[11px] sm:text-xs font-extrabold text-amber-900 outline-none cursor-pointer pr-0.5"
+                aria-label="Chọn năm học"
+                title="Chọn năm học hiển thị dữ liệu"
+              >
+                {availableSchoolYears.map(year => (
+                  <option key={year} value={year} className="text-stone-900 bg-white">
+                    NH {year}{year === DEFAULT_USER_SCHOOL_YEAR ? ' (Mặc định)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             {/* Streak Flame Badge */}
             <div className="hidden sm:flex items-center gap-2 bg-orange-50 border border-orange-100 px-3 py-1.5 rounded-full text-orange-600">
               <Flame className="w-4 h-4 fill-orange-500 text-orange-500 animate-pulse" />
@@ -2056,6 +2161,43 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
               animate={{ opacity: 1, y: 0 }}
               className="max-w-4xl mx-auto space-y-6"
             >
+              {/* Quick Shared Exam Code / Link Input */}
+              {onOpenSharedExam && (
+                <div className="bg-gradient-to-r from-indigo-50 via-blue-50 to-emerald-50 p-5 rounded-3xl border border-indigo-100 shadow-sm flex flex-col sm:flex-row sm:items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-extrabold text-indigo-800">Có mã đề hoặc link đề thi thầy/cô gửi?</p>
+                    <p className="text-[11px] text-stone-600 mt-0.5">Dán mã đề hoặc đường link chia sẻ vào đây để vào làm bài ngay.</p>
+                  </div>
+                  <div className="flex items-center gap-2 sm:w-80">
+                    <input
+                      type="text"
+                      placeholder="Nhập mã đề hoặc dán link (VD: lightedu.vn/...)..."
+                      value={sharedExamCodeInput}
+                      onChange={(e) => setSharedExamCodeInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && sharedExamCodeInput.trim()) {
+                          onOpenSharedExam(sharedExamCodeInput);
+                          setSharedExamCodeInput('');
+                        }
+                      }}
+                      className="flex-1 px-3.5 py-2.5 text-xs font-semibold rounded-xl border border-indigo-200 bg-white outline-none focus:ring-2 focus:ring-indigo-500 text-stone-800"
+                    />
+                    <button
+                      type="button"
+                      disabled={!sharedExamCodeInput.trim()}
+                      onClick={() => {
+                        if (!sharedExamCodeInput.trim()) return;
+                        onOpenSharedExam(sharedExamCodeInput);
+                        setSharedExamCodeInput('');
+                      }}
+                      className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:bg-stone-300 text-white font-bold text-xs rounded-xl transition-all shrink-0 cursor-pointer shadow-sm"
+                    >
+                      Vào làm bài
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {!userProfile.classId ? (
                 <div className="bg-white p-8 md:p-12 rounded-3xl border border-stone-200 text-center flex flex-col items-center max-w-md mx-auto my-12 shadow-sm">
                   <School className="w-14 h-14 text-emerald-400 mb-4 animate-bounce" />
@@ -2119,7 +2261,13 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                           {assignments
                             .filter(a => assignmentSubjectFilter === 'Tất cả' || a.subject === assignmentSubjectFilter)
                             .map((assignment) => {
-                              const isCompleted = results.some(r => r.assignmentId === assignment.id);
+                              const isCompleted = results.some(
+                                r =>
+                                  r.assignmentId === assignment.id ||
+                                  (assignment.templateId &&
+                                    (r.sharedTemplateId === assignment.templateId ||
+                                      r.assignmentId === `template_${assignment.templateId}`))
+                              );
                               return (
                                 <div
                                   key={assignment.id}
@@ -2957,12 +3105,13 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-stone-50">
-                        {results.map((res) => {
+                        {[...results].reverse().map((res) => {
                           const date = parseDate(res.timestamp);
-                          const scorePercent = (res.score / 10) * 100;
+                          const totalQ = res.totalQuestions && res.totalQuestions > 0 ? res.totalQuestions : 10;
+                          const normalizedScore10 = parseFloat(((res.score / totalQ) * 10).toFixed(1));
                           let statusColor = 'text-red-500 bg-red-50 border-red-100';
-                          if (res.score >= 8.0) statusColor = 'text-emerald-500 bg-emerald-50 border-emerald-100';
-                          else if (res.score >= 5.0) statusColor = 'text-amber-500 bg-amber-50 border-amber-100';
+                          if (normalizedScore10 >= 8.0) statusColor = 'text-emerald-500 bg-emerald-50 border-emerald-100';
+                          else if (normalizedScore10 >= 5.0) statusColor = 'text-amber-500 bg-amber-50 border-amber-100';
 
                           return (
                             <tr key={res.id} className="text-xs hover:bg-stone-50/50 transition-colors">
@@ -2972,18 +3121,26 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                               <td className="py-4 px-6">
                                 <span className="font-bold px-2 py-0.5 bg-stone-100 text-stone-600 rounded border border-stone-200">{res.subject}</span>
                               </td>
-                              <td className="py-4 px-6 font-bold text-stone-800 line-clamp-1 max-w-[200px] md:max-w-xs">
-                                {res.topic || 'Đề thi của giáo viên'}
+                              <td className="py-4 px-6 font-bold text-stone-800 max-w-[200px] md:max-w-xs">
+                                <div className="line-clamp-1">{res.topic || 'Đề thi của giáo viên'}</div>
+                                {(res.sharedTemplateId || res.assignmentId?.startsWith('template_')) && (
+                                  <span className="inline-block mt-1 text-[9px] font-extrabold text-indigo-600 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-full">
+                                    Đề chia sẻ
+                                  </span>
+                                )}
                               </td>
                               <td className="py-4 px-6">
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-1.5">
                                   <span className="font-extrabold text-sm text-stone-800">{res.score}</span>
-                                  <span className="text-stone-400">/10</span>
+                                  <span className="text-stone-400">/{totalQ}</span>
+                                  <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-1.5 py-0.5 rounded">
+                                    ({normalizedScore10}đ)
+                                  </span>
                                 </div>
                               </td>
                               <td className="py-4 px-6 text-right">
                                 <span className={`px-2.5 py-1 rounded-full font-bold text-[9px] border uppercase ${statusColor}`}>
-                                  {res.score >= 8.0 ? 'Xuất Sắc' : res.score >= 5.0 ? 'Đạt' : 'Cần cố gắng'}
+                                  {normalizedScore10 >= 8.0 ? 'Xuất Sắc' : normalizedScore10 >= 5.0 ? 'Đạt' : 'Cần cố gắng'}
                                 </span>
                               </td>
                             </tr>
@@ -3517,10 +3674,29 @@ export default function StudentDashboard({ userProfile, onSelectSubject, onSelec
                   <p className="text-xs text-[#2563eb] font-bold uppercase tracking-wider">
                     {className ? `Học sinh lớp ${className}` : `Học sinh ${studentGrade}`}
                   </p>
-                  <p className="text-xs text-stone-400 font-mono mt-1">{(userProfile.email || '').replace('@tuanlo.vn', '')}</p>
+                  <p className="text-xs text-stone-400 font-mono mt-1">{(userProfile.email || '').replace(/@(lightedu|tuanlo)\.vn$/i, '')}</p>
                 </div>
 
                 <div className="border-t border-stone-100 pt-6 w-full space-y-4 text-left">
+                  <div className="flex items-center justify-between text-xs p-4 bg-amber-50/70 rounded-2xl border border-amber-200/80">
+                    <span className="text-amber-800 font-bold flex items-center gap-1.5">
+                      <Calendar className="w-4 h-4 text-amber-600" />
+                      Năm học hiển thị
+                    </span>
+                    <select
+                      value={activeSchoolYear}
+                      onChange={(e) => handleSelectSchoolYear(e.target.value)}
+                      className="font-extrabold text-amber-900 bg-white border border-amber-200 rounded-lg px-2.5 py-1.5 outline-none text-xs focus:ring-1 focus:ring-amber-500 cursor-pointer"
+                      aria-label="Chọn năm học hiển thị"
+                    >
+                      {availableSchoolYears.map(year => (
+                        <option key={year} value={year}>
+                          Năm học {year}{year === DEFAULT_USER_SCHOOL_YEAR ? ' (Mặc định)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   <div className="flex items-center justify-between text-xs p-4 bg-stone-50 rounded-2xl border border-stone-100">
                     <span className="text-stone-400 font-semibold">Trường học</span>
                     <span className="font-bold text-stone-700">{userProfile.schoolName || 'Chưa cập nhật'}</span>

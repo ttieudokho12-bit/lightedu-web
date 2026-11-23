@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, Users, Send, BookOpen, Trash2, CheckCircle, CheckCircle2, Loader2, Sparkles, FileText, BarChart3, ChevronRight, User, Clock, Award, BrainCircuit, X, Library, Upload, FileUp, Download, CheckSquare, Square, Eye, Copy, HelpCircle, Home, Volume2, Mic, Play, Languages, Camera, Folder, Target, Pencil, Key, Search, Bot, ScanLine, QrCode, Gamepad2 } from 'lucide-react';
+import { Plus, Users, Send, BookOpen, Trash2, CheckCircle, CheckCircle2, Loader2, Sparkles, FileText, BarChart3, ChevronRight, User, Clock, Award, BrainCircuit, X, Library, Upload, FileUp, Download, CheckSquare, Square, Eye, Copy, HelpCircle, Home, Volume2, Mic, Play, Languages, Camera, Folder, Target, Pencil, Key, Search, Bot, ScanLine, QrCode, Gamepad2, Share2, Link2, Check, Calendar } from 'lucide-react';
 import { db, auth, serverTimestamp, handleFirestoreError, OperationType, parseDate } from '../firebase';
 import { collection, addDoc, query, where, onSnapshot, deleteDoc, doc, getDocs, orderBy, writeBatch } from 'firebase/firestore';
-import { ClassRoom, Subject, SUBJECTS, Question, Assignment, QuizResult, PronunciationResult, UserProfile, QuizTemplate, PREDEFINED_TOPICS } from '../types';
+import { ClassRoom, Subject, SUBJECTS, Question, Assignment, QuizResult, PronunciationResult, UserProfile, QuizTemplate, PREDEFINED_TOPICS, DEFAULT_SCHOOL_YEAR, DEFAULT_USER_SCHOOL_YEAR, buildAvailableSchoolYears } from '../types';
 import { generateQuestions, generateQuestionsFromContent, analyzeStudentPerformance, generateQuestionsFromFiles } from '../services/gemini';
 import { LazyQuestionImage } from './LazyQuestionImage';
 import Markdown from 'react-markdown';
@@ -21,9 +21,11 @@ type TeacherTab = 'CLASSES' | 'CREATE_QUIZ' | 'LIBRARY' | 'STUDENTS' | 'RESULTS'
 
 interface TeacherDashboardProps {
   userProfile?: UserProfile | null;
+  selectedSchoolYear?: string;
+  onChangeSchoolYear?: (year: string) => void;
 }
 
-export default function TeacherDashboard({ userProfile }: TeacherDashboardProps) {
+export default function TeacherDashboard({ userProfile, selectedSchoolYear: selectedSchoolYearProp, onChangeSchoolYear: onChangeSchoolYearProp }: TeacherDashboardProps) {
   const currentTeacherUid = userProfile?.uid || auth.currentUser?.uid || (() => {
     try {
       const local = localStorage.getItem('localUserSession');
@@ -33,6 +35,13 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
   })();
 
   const [teacherProfile, setTeacherProfile] = useState<UserProfile | null>(userProfile || null);
+  const [internalSchoolYear, setInternalSchoolYear] = useState<string>(selectedSchoolYearProp || DEFAULT_USER_SCHOOL_YEAR);
+  const activeSchoolYear = selectedSchoolYearProp || internalSchoolYear;
+
+  const handleSelectSchoolYear = (year: string) => {
+    setInternalSchoolYear(year);
+    onChangeSchoolYearProp?.(year);
+  };
 
   useEffect(() => {
     if (userProfile) {
@@ -53,23 +62,53 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
 
   const [activeTab, setActiveTab] = useState<TeacherTab>('CLASSES');
   const [classes, setClasses] = useState<ClassRoom[]>([]);
-  const [allStudents, setAllStudents] = useState<UserProfile[]>([]);
+  const [rawStudents, setRawStudents] = useState<UserProfile[]>([]);
 
-  // Filter classes assigned to this teacher
+  const availableSchoolYears = React.useMemo(() => {
+    return buildAvailableSchoolYears([
+      activeSchoolYear,
+      teacherProfile?.schoolYear,
+      ...classes.map(c => c.schoolYear),
+      ...rawStudents.map(s => s.schoolYear)
+    ]);
+  }, [activeSchoolYear, teacherProfile?.schoolYear, classes, rawStudents]);
+
+  const classYearMap = React.useMemo(() => {
+    const map = new Map<string, string>();
+    classes.forEach(c => {
+      map.set(c.id, c.schoolYear || DEFAULT_SCHOOL_YEAR);
+    });
+    return map;
+  }, [classes]);
+
+  const studentYearMap = React.useMemo(() => {
+    const map = new Map<string, string>();
+    rawStudents.forEach(s => {
+      map.set(s.uid, s.schoolYear || DEFAULT_SCHOOL_YEAR);
+    });
+    return map;
+  }, [rawStudents]);
+
+  const allStudents = React.useMemo(() => {
+    return rawStudents.filter(s => (s.schoolYear || DEFAULT_SCHOOL_YEAR) === activeSchoolYear);
+  }, [rawStudents, activeSchoolYear]);
+
+  // Filter classes belonging to the selected school year & teacher assignment
   const assignedClasses = React.useMemo(() => {
+    const yearClasses = classes.filter(c => (c.schoolYear || DEFAULT_SCHOOL_YEAR) === activeSchoolYear);
     const allowedIds = teacherProfile?.allowedClassIds;
     if (allowedIds && Array.isArray(allowedIds) && allowedIds.length > 0) {
-      return classes.filter(c => allowedIds.includes(c.id) || c.teacherId === currentTeacherUid);
+      return yearClasses.filter(c => allowedIds.includes(c.id) || c.teacherId === currentTeacherUid);
     }
     if (allowedIds && Array.isArray(allowedIds) && allowedIds.length === 0) {
       return [];
     }
-    const myClasses = classes.filter(c => c.teacherId === currentTeacherUid);
+    const myClasses = yearClasses.filter(c => c.teacherId === currentTeacherUid);
     if (myClasses.length > 0) {
       return myClasses;
     }
-    return classes;
-  }, [classes, teacherProfile?.allowedClassIds, currentTeacherUid]);
+    return yearClasses;
+  }, [classes, teacherProfile?.allowedClassIds, currentTeacherUid, activeSchoolYear]);
 
   const assignedClassIds = React.useMemo(() => {
     return assignedClasses.map(c => c.id);
@@ -133,15 +172,59 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
   const [quizTemplates, setQuizTemplates] = useState<QuizTemplate[]>([]);
   const [selectedTemplates, setSelectedTemplates] = useState<string[]>([]);
   const [isAssigningFromLibrary, setIsAssigningFromLibrary] = useState(false);
-  const [assignToClasses, setAssignToClasses] = useState<string[]>([]);
+  const [assignClassesByTemplate, setAssignClassesByTemplate] = useState<Record<string, string[]>>({});
+  const [copiedTemplateId, setCopiedTemplateId] = useState<string | null>(null);
+  const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
+  const [shareLinkPopup, setShareLinkPopup] = useState<{ id: string; title: string; url: string; convertedFromDev: boolean; paramType?: 'exam' | 'assignment' } | null>(null);
+  const [assignedSuccessModal, setAssignedSuccessModal] = useState<{
+    shareId: string;
+    shareUrl: string;
+    title: string;
+    subject: string;
+    questionCount: number;
+    convertedFromDev: boolean;
+    classNames: string[];
+  } | null>(null);
+  const [copiedModalKey, setCopiedModalKey] = useState<string | null>(null);
+  const [customShareBaseUrl, setCustomShareBaseUrl] = useState<string>(() => {
+    try {
+      return localStorage.getItem('customShareBaseUrl') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [showCustomDomainInput, setShowCustomDomainInput] = useState<boolean>(false);
 
   // Results State
   const [results, setResults] = useState<QuizResult[]>([]);
-  const [pronunciationResults, setPronunciationResults] = useState<PronunciationResult[]>([]);
+  const [rawPronunciationResults, setRawPronunciationResults] = useState<PronunciationResult[]>([]);
   const [resultsSubTab, setResultsSubTab] = useState<'quiz' | 'pronunciation'>('quiz');
-  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [rawAssignments, setRawAssignments] = useState<Assignment[]>([]);
   const [selectedAssignment, setSelectedAssignment] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const assignments = React.useMemo(() => {
+    return rawAssignments.filter(a => {
+      const year = a.schoolYear || classYearMap.get(a.classId) || DEFAULT_SCHOOL_YEAR;
+      return year === activeSchoolYear;
+    });
+  }, [rawAssignments, classYearMap, activeSchoolYear]);
+
+  const pronunciationResults = React.useMemo(() => {
+    return rawPronunciationResults.filter(p => {
+      const year = p.schoolYear || studentYearMap.get(p.uid) || DEFAULT_SCHOOL_YEAR;
+      return year === activeSchoolYear;
+    });
+  }, [rawPronunciationResults, studentYearMap, activeSchoolYear]);
+
+  // Reset year-dependent selections whenever activeSchoolYear changes
+  useEffect(() => {
+    setSelectedClass('');
+    setSelectedClassForStudents(null);
+    setSelectedAssignment(null);
+    setSelectedStudents([]);
+    setAssignClassesByTemplate({});
+  }, [activeSchoolYear]);
 
   // View & Re-assign State
   const [viewingQuiz, setViewingQuiz] = useState<Question[] | null>(null);
@@ -294,7 +377,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
     const unsubscribeAssignments = onSnapshot(qAssignments, (snapshot) => {
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Assignment));
       list.sort((a, b) => parseDate(b.createdAt).getTime() - parseDate(a.createdAt).getTime());
-      setAssignments(list);
+      setRawAssignments(list);
       checkLoading();
     }, (error) => {
       console.error('Error fetching assignments:', error);
@@ -315,7 +398,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
     const qStudents = query(collection(db, 'users'), where('role', '==', 'student'));
     const unsubscribeStudents = onSnapshot(qStudents, (snapshot) => {
       const list = snapshot.docs.map(doc => doc.data() as UserProfile);
-      setAllStudents(list);
+      setRawStudents(list);
       checkLoading();
     }, (error) => {
       console.error('Error fetching students:', error);
@@ -340,7 +423,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
     const unsubscribePronunciation = onSnapshot(qPronunciation, (snapshot) => {
       const list = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as PronunciationResult));
       list.sort((a, b) => parseDate(b.timestamp).getTime() - parseDate(a.timestamp).getTime());
-      setPronunciationResults(list);
+      setRawPronunciationResults(list);
     }, (error) => {
       console.error('Error fetching pronunciation results:', error);
     });
@@ -477,31 +560,121 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
     }
   };
 
+  const buildPublicShareUrl = (id: string, overrideBaseUrl?: string, paramType: 'exam' | 'assignment' = 'exam') => {
+    const customBase = (overrideBaseUrl !== undefined ? overrideBaseUrl : customShareBaseUrl).trim().replace(/\/+$/, '');
+    if (customBase) {
+      const normalized = /^https?:\/\//i.test(customBase) ? customBase : `https://${customBase}`;
+      return {
+        url: `${normalized}/?${paramType}=${encodeURIComponent(id)}`,
+        convertedFromDev: false
+      };
+    }
+
+    let origin = window.location.origin;
+    let convertedFromDev = false;
+    // AI Studio's private dev URL (ais-dev-...) blocks all Gmail accounts except the app owner (redirects to aistudio.google.com/404).
+    // Automatically switch to the public/shared URL (ais-pre-...) so students & other accounts can open the link.
+    if (/^https?:\/\/ais-dev-/i.test(origin)) {
+      origin = origin.replace(/^(https?:\/\/)ais-dev-/i, '$1ais-pre-');
+      convertedFromDev = true;
+    }
+
+    const cleanPath = window.location.pathname.replace(/\/+$/, '');
+    return {
+      url: `${origin}${cleanPath}/?${paramType}=${encodeURIComponent(id)}`,
+      convertedFromDev
+    };
+  };
+
+  const copyTextToClipboard = async (text: string): Promise<boolean> => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+      // fallback below
+    }
+    try {
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-9999px';
+      textArea.style.top = '-9999px';
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(textArea);
+      return ok;
+    } catch {
+      return false;
+    }
+  };
+
+  const getAssignmentShareId = (as: Assignment): string => {
+    if (as.templateId) return as.templateId;
+    const matchedTemplate = quizTemplates.find(
+      t => t.id && t.title === as.title && t.subject === as.subject
+    );
+    return matchedTemplate?.id || as.id;
+  };
+
   const handleAssignFromLibrary = async (template: QuizTemplate) => {
-    if (assignToClasses.length === 0 || !currentTeacherUid) {
-      alert('Vui lòng chọn ít nhất một lớp học.');
+    const targetClasses = template.id ? (assignClassesByTemplate[template.id] || []) : [];
+    if (targetClasses.length === 0 || !currentTeacherUid) {
+      setToast({ message: 'Vui lòng chọn ít nhất một lớp học để giao đề.', type: 'error' });
       return;
     }
 
     setIsAssigningFromLibrary(true);
     try {
       const batch = writeBatch(db);
-      assignToClasses.forEach(classId => {
+      const assignedClassNames: string[] = [];
+      let firstAssignmentId = '';
+
+      targetClasses.forEach(classId => {
         const newAssignmentRef = doc(collection(db, 'assignments'));
+        if (!firstAssignmentId) firstAssignmentId = newAssignmentRef.id;
         batch.set(newAssignmentRef, {
           classId,
           teacherId: currentTeacherUid,
+          templateId: template.id || null,
+          schoolYear: classYearMap.get(classId) || activeSchoolYear,
           title: template.title,
           subject: template.subject,
           questions: template.questions,
           createdAt: serverTimestamp()
         });
+
+        const className = classes.find(c => c.id === classId)?.name || classId;
+        assignedClassNames.push(className);
       });
+
       await batch.commit();
-      setToast({ message: `Đã giao đề thi cho ${assignToClasses.length} lớp thành công!`, type: 'success' });
-      setAssignToClasses([]);
+
+      // Use the exact same ?exam=<templateId> link as the Share button next to each exam title
+      const shareId = template.id || firstAssignmentId;
+      const { url: shareUrl, convertedFromDev } = buildPublicShareUrl(shareId, undefined, 'exam');
+
+      // Clear selected classes for this template
+      if (template.id) {
+        setAssignClassesByTemplate(prev => ({ ...prev, [template.id!]: [] }));
+      }
+
+      // Open modal immediately with the unified copyable link
+      setAssignedSuccessModal({
+        shareId,
+        shareUrl,
+        title: template.title,
+        subject: template.subject,
+        questionCount: template.questions.length,
+        convertedFromDev,
+        classNames: assignedClassNames
+      });
+
+      setToast({ message: `Đã giao đề thi cho ${targetClasses.length} lớp thành công!`, type: 'success' });
       setIsAssigningFromLibrary(false);
-      setActiveTab('CLASSES');
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'assignments');
       setToast({ message: 'Lỗi khi giao đề thi.', type: 'error' });
@@ -536,24 +709,90 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
     });
   };
 
+  const handleCopyShareLink = async (
+    targetId: string,
+    title: string,
+    overrideBaseUrl?: string,
+    paramType: 'exam' | 'assignment' = 'exam'
+  ) => {
+    const { url: shareUrl, convertedFromDev } = buildPublicShareUrl(targetId, overrideBaseUrl, paramType);
+    const copiedOk = await copyTextToClipboard(shareUrl);
+
+    setCopiedTemplateId(targetId);
+    setShareLinkPopup({ id: targetId, title, url: shareUrl, convertedFromDev, paramType });
+    setToast({
+      message: copiedOk
+        ? `Đã sao chép link chia sẻ đề "${title}"!`
+        : 'Đã tạo link chia sẻ! Bạn có thể chọn và sao chép link trong hộp thông báo.',
+      type: 'success'
+    });
+
+    setTimeout(() => {
+      setCopiedTemplateId(prev => (prev === targetId ? null : prev));
+    }, 2500);
+  };
+
+  const handleCopyModalLink = async (key: string, textToCopy: string, label: string) => {
+    const ok = await copyTextToClipboard(textToCopy);
+    setCopiedModalKey(key);
+    setToast({
+      message: ok ? `Đã sao chép ${label}!` : 'Vui lòng bôi đen ô đường dẫn để sao chép.',
+      type: 'success'
+    });
+    setTimeout(() => {
+      setCopiedModalKey(prev => (prev === key ? null : prev));
+    }, 2500);
+  };
+
+  const handleCopyExamCode = async (templateId: string) => {
+    const copiedOk = await copyTextToClipboard(templateId);
+    setCopiedCodeId(templateId);
+    setToast({
+      message: copiedOk ? `Đã sao chép mã đề: ${templateId}` : 'Hãy bôi đen mã đề để sao chép.',
+      type: 'success'
+    });
+    setTimeout(() => {
+      setCopiedCodeId(prev => (prev === templateId ? null : prev));
+    }, 2500);
+  };
+
   const handleSendToClass = async () => {
     if (!selectedClass || !assignmentTitle || generatedQuestions.length === 0 || !currentTeacherUid) return;
     
     try {
-      await addDoc(collection(db, 'assignments'), {
+      const matchedTemplate = quizTemplates.find(
+        t => t.id && t.title === assignmentTitle && t.subject === selectedSubject
+      );
+      const docRef = await addDoc(collection(db, 'assignments'), {
         classId: selectedClass,
         teacherId: currentTeacherUid,
+        templateId: matchedTemplate?.id || null,
+        schoolYear: classYearMap.get(selectedClass) || activeSchoolYear,
         title: assignmentTitle,
         subject: selectedSubject,
         questions: generatedQuestions,
         createdAt: serverTimestamp()
       });
+
+      const shareId = matchedTemplate?.id || docRef.id;
+      const { url: shareUrl, convertedFromDev } = buildPublicShareUrl(shareId, undefined, 'exam');
+      const className = classes.find(c => c.id === selectedClass)?.name || selectedClass;
+
+      setAssignedSuccessModal({
+        shareId,
+        shareUrl,
+        title: assignmentTitle,
+        subject: selectedSubject,
+        questionCount: generatedQuestions.length,
+        convertedFromDev,
+        classNames: [className]
+      });
+
       setToast({ message: 'Đã gửi đề bài vào lớp thành công!', type: 'success' });
       setGeneratedQuestions([]);
       setAssignmentTitle('');
       setTopic('');
       setManualContent('');
-      setActiveTab('CLASSES');
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'assignments');
       setToast({ message: 'Lỗi khi gửi đề bài.', type: 'error' });
@@ -570,7 +809,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
       message: `Bạn có đồng ý xóa đề thi "${assignment?.title || ''}" không?`,
       onConfirm: async () => {
         // Optimistic UI update
-        setAssignments(prev => prev.filter(a => a.id !== id));
+        setRawAssignments(prev => prev.filter(a => a.id !== id));
         if (viewingQuizId === id) {
           setViewingQuiz(null);
           setViewingQuizId(null);
@@ -642,23 +881,44 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
 
     setIsReassigning(true);
     try {
+      const shareId = getAssignmentShareId(reassigningAssignment);
+      const linkedTemplateId =
+        reassigningAssignment.templateId ||
+        quizTemplates.find(t => t.id && t.title === reassigningAssignment.title && t.subject === reassigningAssignment.subject)?.id ||
+        null;
+
       const batch = writeBatch(db);
+      const assignedClassNames: string[] = [];
       reassignToClasses.forEach(classId => {
         const newAssignmentRef = doc(collection(db, 'assignments'));
         batch.set(newAssignmentRef, {
           classId,
           teacherId: currentTeacherUid,
+          templateId: linkedTemplateId,
+          schoolYear: classYearMap.get(classId) || activeSchoolYear,
           title: reassigningAssignment.title,
           subject: reassigningAssignment.subject,
           questions: reassigningAssignment.questions,
           createdAt: serverTimestamp()
         });
+        assignedClassNames.push(classes.find(c => c.id === classId)?.name || classId);
       });
       await batch.commit();
+
+      const { url: shareUrl, convertedFromDev } = buildPublicShareUrl(shareId, undefined, 'exam');
+      setAssignedSuccessModal({
+        shareId,
+        shareUrl,
+        title: reassigningAssignment.title,
+        subject: reassigningAssignment.subject,
+        questionCount: reassigningAssignment.questions.length,
+        convertedFromDev,
+        classNames: assignedClassNames
+      });
+
       setToast({ message: `Đã giao lại đề thi cho ${reassignToClasses.length} lớp thành công!`, type: 'success' });
       setReassigningAssignment(null);
       setReassignToClasses([]);
-      setActiveTab('CLASSES');
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'assignments');
       setToast({ message: 'Lỗi khi giao lại đề thi.', type: 'error' });
@@ -691,10 +951,11 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
         ? s.classId === selectedClassForStudents 
         : isStudentInAssignedClass;
       const searchLower = studentSearchTerm.toLowerCase().trim();
-      const username = s.email ? s.email.replace('@tuanlo.vn', '') : '';
+      const normalizedEmail = s.email ? s.email.replace(/@tuanlo\.vn$/i, '@lightedu.vn') : '';
+      const username = normalizedEmail ? normalizedEmail.replace(/@lightedu\.vn$/i, '') : '';
       const matchesSearch = !searchLower || (
         (s.displayName && s.displayName.toLowerCase().includes(searchLower)) ||
-        s.email.toLowerCase().includes(searchLower) ||
+        normalizedEmail.toLowerCase().includes(searchLower) ||
         username.toLowerCase().includes(searchLower)
       );
       return matchesClass && matchesSearch;
@@ -707,14 +968,16 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
 
     const data = filtered.map((student, index) => {
       const className = classes.find(c => c.id === student.classId)?.name || student.classId || 'Chưa xếp lớp';
-      const username = student.email ? student.email.replace('@tuanlo.vn', '') : '---';
+      const normalizedEmail = student.email ? student.email.replace(/@tuanlo\.vn$/i, '@lightedu.vn') : '';
+      const username = normalizedEmail ? normalizedEmail.replace(/@lightedu\.vn$/i, '') : '---';
       const password = (student as any).password || '123456';
       return {
         'STT': index + 1,
+        'Năm học': student.schoolYear || activeSchoolYear,
         'Họ và tên học sinh': student.displayName || 'Chưa cập nhật',
         'Lớp': className,
         'Tên đăng nhập / Mã HS': username,
-        'Email đầy đủ': student.email || '---',
+        'Email đầy đủ': normalizedEmail || '---',
         'Mật khẩu': password,
         'Trường học': student.schoolName || '---',
         'Xã/Phường': student.communeName || '---',
@@ -725,6 +988,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
     const worksheet = XLSX.utils.json_to_sheet(data);
     worksheet['!cols'] = [
       { wch: 6 },  // STT
+      { wch: 14 }, // Năm học
       { wch: 25 }, // Họ và tên
       { wch: 15 }, // Lớp
       { wch: 25 }, // Tên đăng nhập
@@ -742,12 +1006,31 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
       ? classes.find(c => c.id === selectedClassForStudents)?.name || selectedClassForStudents 
       : 'Tat_Ca_Cac_Lop';
 
-    XLSX.writeFile(workbook, `Tai_Khoan_Hoc_Sinh_Lop_${classNameStr.replace(/\s+/g, '_')}.xlsx`);
+    XLSX.writeFile(workbook, `Tai_Khoan_Hoc_Sinh_${activeSchoolYear}_Lop_${classNameStr.replace(/\s+/g, '_')}.xlsx`);
   };
 
   const filteredResults = results.filter(r => {
-    const matchesAssignment = !selectedAssignment || r.assignmentId === selectedAssignment;
+    const selectedAsObj = selectedAssignment && !selectedAssignment.startsWith('template_')
+      ? assignments.find(a => a.id === selectedAssignment)
+      : null;
     const student = allStudents.find(s => s.uid === r.uid);
+    const resultClassId = r.classId || student?.classId;
+    const resultSchoolYear =
+      r.schoolYear ||
+      (resultClassId ? classYearMap.get(resultClassId) : undefined) ||
+      studentYearMap.get(r.uid) ||
+      DEFAULT_SCHOOL_YEAR;
+    if (resultSchoolYear !== activeSchoolYear) return false;
+
+    const matchesAssignment = !selectedAssignment
+      || r.assignmentId === selectedAssignment
+      || (selectedAssignment.startsWith('template_') && (
+        r.sharedTemplateId === selectedAssignment.replace('template_', '') ||
+        r.assignmentId === selectedAssignment
+      ))
+      || (selectedAsObj?.templateId
+        && (r.sharedTemplateId === selectedAsObj.templateId || r.assignmentId === `template_${selectedAsObj.templateId}`)
+        && (!selectedAsObj.classId || resultClassId === selectedAsObj.classId));
     const matchesAssignedClasses = assignedClassIds.length === 0 || (student?.classId && assignedClassIds.includes(student.classId)) || (r.classId && assignedClassIds.includes(r.classId));
     return matchesAssignment && matchesAssignedClasses;
   });
@@ -859,14 +1142,14 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
         </div>
       </div>
 
-      {/* Teaching Assignment Banner */}
-      <div className="bg-gradient-to-r from-emerald-950 via-stone-900 to-indigo-950 text-white p-5 rounded-3xl shadow-xl border border-emerald-900/40 flex flex-col md:flex-row md:items-center justify-between gap-4">
+      {/* Teaching Assignment Banner with Interactive School Year Selector */}
+      <div className="bg-gradient-to-r from-emerald-950 via-stone-900 to-indigo-950 text-white p-5 rounded-3xl shadow-xl border border-emerald-900/40 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="p-3 bg-emerald-500/20 rounded-2xl border border-emerald-500/30 text-emerald-400">
+          <div className="p-3 bg-emerald-500/20 rounded-2xl border border-emerald-500/30 text-emerald-400 shrink-0">
             <BookOpen className="w-6 h-6" />
           </div>
           <div>
-            <h2 className="text-base md:text-lg font-bold text-white flex items-center gap-2">
+            <h2 className="text-base md:text-lg font-bold text-white flex items-center gap-2 flex-wrap">
               Phân công giảng dạy
               <span className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
                 Giáo viên
@@ -879,17 +1162,35 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5 text-xs">
+          {/* Interactive School Year Selector */}
+          <div className="bg-amber-400/15 backdrop-blur-md px-3 py-1.5 rounded-2xl border border-amber-400/40 flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-amber-300 shrink-0" />
+            <span className="text-amber-200 font-bold whitespace-nowrap">Năm học:</span>
+            <select
+              value={activeSchoolYear}
+              onChange={(e) => handleSelectSchoolYear(e.target.value)}
+              className="bg-white text-stone-900 font-extrabold text-xs px-2.5 py-1 rounded-xl outline-none focus:ring-2 focus:ring-amber-400 cursor-pointer"
+              aria-label="Chọn năm học cho giáo viên"
+            >
+              {availableSchoolYears.map(year => (
+                <option key={year} value={year}>
+                  {year}{year === DEFAULT_USER_SCHOOL_YEAR ? ' (Mặc định)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div className="bg-white/10 backdrop-blur-md px-3 py-2 rounded-2xl border border-white/10 flex items-center gap-2">
-            <Users className="w-4 h-4 text-emerald-400" />
-            <span className="text-stone-300 font-medium">Lớp được phân công:</span>
+            <Users className="w-4 h-4 text-emerald-400 shrink-0" />
+            <span className="text-stone-300 font-medium">Lớp ({activeSchoolYear}):</span>
             <span className="font-bold text-white">
               {teacherProfile?.allowedClassIds && teacherProfile.allowedClassIds.length > 0
-                ? (assignedClasses.length > 0 ? assignedClasses.map(c => c.name).join(', ') : 'Chưa được phân công lớp nào')
-                : 'Tất cả các lớp'}
+                ? (assignedClasses.length > 0 ? assignedClasses.map(c => c.name).join(', ') : `Chưa có lớp năm ${activeSchoolYear}`)
+                : (assignedClasses.length > 0 ? `${assignedClasses.length} lớp` : `Chưa có lớp năm ${activeSchoolYear}`)}
             </span>
           </div>
           <div className="bg-white/10 backdrop-blur-md px-3 py-2 rounded-2xl border border-white/10 flex items-center gap-2">
-            <Languages className="w-4 h-4 text-blue-400" />
+            <Languages className="w-4 h-4 text-blue-400 shrink-0" />
             <span className="text-stone-300 font-medium">Môn được phân công:</span>
             <span className="font-bold text-white">
               {teacherProfile?.allowedSubjects && teacherProfile.allowedSubjects.length > 0
@@ -984,6 +1285,23 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                         </div>
                       </div>
                       <div className="flex items-center gap-2 shrink-0 relative z-10">
+                        {(() => {
+                          const shareId = getAssignmentShareId(as);
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => handleCopyShareLink(shareId, as.title, undefined, 'exam')}
+                              className={`p-3 rounded-xl transition-all hover:scale-110 active:scale-95 shadow-sm border cursor-pointer ${
+                                copiedTemplateId === shareId
+                                  ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
+                                  : 'text-indigo-600 hover:bg-indigo-50 bg-white border-stone-50'
+                              }`}
+                              title="Sao chép link đề thi gửi học sinh"
+                            >
+                              {copiedTemplateId === shareId ? <Check className="w-5 h-5" /> : <Share2 className="w-5 h-5" />}
+                            </button>
+                          );
+                        })()}
                         <button 
                           onClick={() => {
                             setViewingQuiz(as.questions);
@@ -1538,6 +1856,18 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                         </div>
                       </div>
                       <div className="flex items-center gap-1 shrink-0 relative z-10">
+                        <button
+                          type="button"
+                          onClick={() => handleCopyShareLink(template.id!, template.title)}
+                          className={`p-2 rounded-xl transition-all cursor-pointer ${
+                            copiedTemplateId === template.id
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : 'text-indigo-600 hover:bg-indigo-50'
+                          }`}
+                          title="Chia sẻ / Copy link gửi học sinh"
+                        >
+                          {copiedTemplateId === template.id ? <Check className="w-5 h-5" /> : <Share2 className="w-5 h-5" />}
+                        </button>
                         <button 
                           onClick={() => {
                             setViewingQuiz(template.questions);
@@ -1561,34 +1891,76 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                       </div>
                     </div>
 
+                    {/* Quick Share Link Box */}
+                    <div className="flex items-center justify-between gap-2 p-3 bg-indigo-50/70 border border-indigo-100 rounded-xl">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Link2 className="w-4 h-4 text-indigo-600 shrink-0" />
+                        <span className="text-xs font-semibold text-indigo-900 truncate">
+                          Gửi link để học sinh đăng nhập làm bài
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleCopyShareLink(template.id!, template.title)}
+                        className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm ${
+                          copiedTemplateId === template.id
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                        }`}
+                      >
+                        {copiedTemplateId === template.id ? (
+                          <>
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Đã copy link</span>
+                          </>
+                        ) : (
+                          <>
+                            <Share2 className="w-3.5 h-3.5" />
+                            <span>Chia sẻ link</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
                     <div className="space-y-3 pt-4 border-t border-stone-50">
                       <p className="text-xs font-bold text-stone-400 uppercase tracking-widest flex items-center gap-2">
                         <Users className="w-3 h-3" />
                         Giao cho lớp:
                       </p>
                       <div className="flex flex-wrap gap-2">
-                        {assignedClasses.map(cls => (
-                          <button
-                            key={cls.id}
-                            onClick={() => {
-                              setAssignToClasses(prev => 
-                                prev.includes(cls.id!) ? prev.filter(id => id !== cls.id) : [...prev, cls.id!]
-                              );
-                            }}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
-                              assignToClasses.includes(cls.id!) 
-                                ? 'bg-amber-500 text-white shadow-md shadow-amber-100' 
-                                : 'bg-stone-100 text-stone-500 hover:bg-amber-50 hover:text-amber-600'
-                            }`}
-                          >
-                            {cls.name}
-                          </button>
-                        ))}
+                        {assignedClasses.map(cls => {
+                          const selectedForTemplate = template.id ? (assignClassesByTemplate[template.id] || []) : [];
+                          const isSelected = selectedForTemplate.includes(cls.id!);
+                          return (
+                            <button
+                              key={cls.id}
+                              type="button"
+                              onClick={() => {
+                                if (!template.id) return;
+                                setAssignClassesByTemplate(prev => {
+                                  const current = prev[template.id!] || [];
+                                  const next = current.includes(cls.id!)
+                                    ? current.filter(id => id !== cls.id)
+                                    : [...current, cls.id!];
+                                  return { ...prev, [template.id!]: next };
+                                });
+                              }}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                                isSelected
+                                  ? 'bg-amber-500 text-white shadow-md shadow-amber-100' 
+                                  : 'bg-stone-100 text-stone-500 hover:bg-amber-50 hover:text-amber-600'
+                              }`}
+                            >
+                              {cls.name}
+                            </button>
+                          );
+                        })}
                       </div>
                       <button 
+                        type="button"
                         onClick={() => handleAssignFromLibrary(template)}
-                        disabled={isAssigningFromLibrary || assignToClasses.length === 0}
-                        className="w-full py-3 bg-stone-900 text-white font-bold rounded-xl hover:bg-stone-800 disabled:bg-stone-100 disabled:text-stone-400 transition-all flex items-center justify-center gap-2 mt-2 shadow-lg"
+                        disabled={isAssigningFromLibrary || !(template.id && (assignClassesByTemplate[template.id]?.length || 0) > 0)}
+                        className="w-full py-3 bg-stone-900 text-white font-bold rounded-xl hover:bg-stone-800 disabled:bg-stone-100 disabled:text-stone-400 transition-all flex items-center justify-center gap-2 mt-2 shadow-lg cursor-pointer"
                       >
                         {isAssigningFromLibrary ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                         Giao đề thi đã chọn
@@ -1621,7 +1993,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                             ? s.classId === selectedClassForStudents 
                             : isStudentInAssignedClass;
                           const searchLower = studentSearchTerm.toLowerCase().trim();
-                          const username = s.email ? s.email.replace('@tuanlo.vn', '') : '';
+                          const username = s.email ? s.email.replace(/@(lightedu|tuanlo)\.vn$/i, '') : '';
                           const matchesSearch = !searchLower || (
                             (s.displayName && s.displayName.toLowerCase().includes(searchLower)) ||
                             s.email.toLowerCase().includes(searchLower) ||
@@ -1703,7 +2075,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                     ? s.classId === selectedClassForStudents 
                     : isStudentInAssignedClass;
                   const searchLower = studentSearchTerm.toLowerCase().trim();
-                  const username = s.email ? s.email.replace('@tuanlo.vn', '') : '';
+                  const username = s.email ? s.email.replace(/@(lightedu|tuanlo)\.vn$/i, '') : '';
                   const matchesSearch = !searchLower || (
                     (s.displayName && s.displayName.toLowerCase().includes(searchLower)) ||
                     s.email.toLowerCase().includes(searchLower) ||
@@ -1747,7 +2119,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                       <div className="bg-stone-100/80 p-2.5 rounded-xl text-xs font-mono text-stone-600 space-y-1 mb-4 border border-stone-200/50">
                         <div className="flex items-center justify-between text-[11px]">
                           <span className="text-stone-400 font-sans font-medium">Tên đăng nhập:</span>
-                          <span className="font-bold text-stone-800">{student.email ? student.email.replace('@tuanlo.vn', '') : '---'}</span>
+                          <span className="font-bold text-stone-800">{student.email ? student.email.replace(/@(lightedu|tuanlo)\.vn$/i, '') : '---'}</span>
                         </div>
                         <div className="flex items-center justify-between text-[11px]">
                           <span className="text-stone-400 font-sans font-medium">Mật khẩu:</span>
@@ -1818,7 +2190,7 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                       <tr key={idx} className="border-b border-stone-50 hover:bg-stone-50 transition-colors">
                         <td className="py-4 px-4">
                           <p className="font-bold text-stone-900">{res.name}</p>
-                          <p className="text-[10px] text-stone-400">{res.email?.replace('@tuanlo.vn', '')}</p>
+                          <p className="text-[10px] text-stone-400">{res.email?.replace(/@(lightedu|tuanlo)\.vn$/i, '')}</p>
                         </td>
                         <td className="py-4 px-4">
                           <span className="text-xs font-bold text-stone-600">{res.class}</span>
@@ -1866,7 +2238,20 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                     className="p-3 rounded-xl border border-stone-200 outline-none focus:ring-2 focus:ring-blue-500 min-w-[250px] font-bold text-sm bg-stone-50 transition-all"
                   >
                     <option value="">Tất cả đề thi</option>
-                    {assignments.map(as => <option key={as.id} value={as.id}>{as.title}</option>)}
+                    {assignments.length > 0 && (
+                      <optgroup label="Bài giao cho lớp">
+                        {assignments.map(as => <option key={as.id} value={as.id}>{as.title}</option>)}
+                      </optgroup>
+                    )}
+                    {quizTemplates.length > 0 && (
+                      <optgroup label="Đề chia sẻ từ Thư viện">
+                        {quizTemplates.map(t => (
+                          <option key={`tpl_${t.id}`} value={`template_${t.id}`}>
+                            [Link chia sẻ] {t.title}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
                   </select>
                 </div>
               )}
@@ -1937,7 +2322,12 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                         </td>
                         <td className="py-4 px-6">
                           <p className="text-sm font-bold text-stone-800 group-hover:text-blue-600 transition-colors">{res.topic}</p>
-                          <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded uppercase tracking-widest">{res.subject}</span>
+                          <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                            <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded uppercase tracking-widest">{res.subject}</span>
+                            {(res.sharedTemplateId || res.assignmentId?.startsWith('template_')) && (
+                              <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100">Link chia sẻ</span>
+                            )}
+                          </div>
                         </td>
                         <td className="py-4 px-6 text-center">
                           <div className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-emerald-50 text-emerald-700 font-bold text-sm shadow-sm border border-emerald-100">
@@ -2221,28 +2611,53 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
                 </div>
               </div>
 
-              <div className="p-6 border-t border-stone-100 bg-white flex justify-between items-center">
-                {viewingQuizId ? (
-                  <button 
-                    onClick={() => {
-                      if (viewingQuizType === 'assignment') {
-                        handleDeleteAssignment(viewingQuizId);
-                      } else {
-                        handleDeleteTemplate(viewingQuizId);
-                      }
-                    }}
-                    className="px-6 py-3 bg-rose-50 text-rose-600 font-bold rounded-xl hover:bg-rose-100 transition-all flex items-center gap-2"
-                  >
-                    <Trash2 className="w-5 h-5" />
-                    Xóa đề thi này
-                  </button>
-                ) : <div />}
+              <div className="p-6 border-t border-stone-100 bg-white flex flex-wrap justify-between items-center gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  {viewingQuizId && (
+                    <button 
+                      onClick={() => {
+                        if (viewingQuizType === 'assignment') {
+                          handleDeleteAssignment(viewingQuizId);
+                        } else {
+                          handleDeleteTemplate(viewingQuizId);
+                        }
+                      }}
+                      className="px-5 py-3 bg-rose-50 text-rose-600 font-bold rounded-xl hover:bg-rose-100 transition-all flex items-center gap-2 cursor-pointer"
+                    >
+                      <Trash2 className="w-5 h-5" />
+                      Xóa đề thi này
+                    </button>
+                  )}
+                  {viewingQuizId && (() => {
+                    const viewingShareId =
+                      viewingQuizType === 'assignment'
+                        ? (() => {
+                            const found = assignments.find(a => a.id === viewingQuizId);
+                            return found ? getAssignmentShareId(found) : viewingQuizId;
+                          })()
+                        : viewingQuizId;
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => handleCopyShareLink(viewingShareId, viewingQuizTitle, undefined, 'exam')}
+                        className={`px-5 py-3 font-bold rounded-xl transition-all flex items-center gap-2 cursor-pointer ${
+                          copiedTemplateId === viewingShareId
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-200'
+                        }`}
+                      >
+                        {copiedTemplateId === viewingShareId ? <Check className="w-5 h-5" /> : <Share2 className="w-5 h-5" />}
+                        {copiedTemplateId === viewingShareId ? 'Đã copy link chia sẻ' : 'Copy link chia sẻ'}
+                      </button>
+                    );
+                  })()}
+                </div>
                 <button 
                   onClick={() => {
                     setViewingQuiz(null);
                     setViewingQuizId(null);
                   }}
-                  className="px-8 py-3 bg-stone-900 text-white font-bold rounded-xl hover:bg-stone-800 transition-all"
+                  className="px-8 py-3 bg-stone-900 text-white font-bold rounded-xl hover:bg-stone-800 transition-all cursor-pointer"
                 >
                   Đóng
                 </button>
@@ -2451,6 +2866,316 @@ export default function TeacherDashboard({ userProfile }: TeacherDashboardProps)
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* Share Link Floating Box */}
+      <AnimatePresence>
+        {shareLinkPopup && (
+          <motion.div
+            initial={{ opacity: 0, y: 24, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 24, scale: 0.96 }}
+            className="fixed bottom-5 right-5 z-[60] w-[calc(100%-2.5rem)] max-w-md bg-white border-2 border-indigo-200 rounded-2xl shadow-2xl p-4 space-y-3"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="w-9 h-9 rounded-xl bg-indigo-100 text-indigo-600 flex items-center justify-center shrink-0">
+                  <Share2 className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-extrabold text-indigo-700 uppercase tracking-wider">Link chia sẻ đề thi</p>
+                  <p className="text-sm font-bold text-stone-900 truncate">{shareLinkPopup.title}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShareLinkPopup(null)}
+                className="p-1.5 text-stone-400 hover:text-stone-700 hover:bg-stone-100 rounded-lg cursor-pointer"
+                title="Đóng"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={shareLinkPopup.url}
+                  onFocus={(e) => e.target.select()}
+                  className="flex-1 text-xs font-mono bg-stone-50 border border-stone-200 rounded-xl px-3 py-2 text-stone-700 outline-none focus:border-indigo-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleCopyShareLink(shareLinkPopup.id, shareLinkPopup.title, undefined, shareLinkPopup.paramType || 'exam')}
+                  className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shrink-0 cursor-pointer transition-colors"
+                >
+                  {copiedTemplateId === shareLinkPopup.id ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedTemplateId === shareLinkPopup.id ? 'Đã copy' : 'Copy link'}</span>
+                </button>
+              </div>
+
+              {/* Exam Code Row */}
+              <div className="flex items-center justify-between gap-2 px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl">
+                <div className="text-[11px] text-stone-600 truncate">
+                  <span className="font-bold text-stone-500">Mã đề thi: </span>
+                  <span className="font-mono font-bold text-indigo-700 select-all">{shareLinkPopup.id}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleCopyExamCode(shareLinkPopup.id)}
+                  className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 shrink-0 cursor-pointer"
+                >
+                  {copiedCodeId === shareLinkPopup.id ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                  <span>{copiedCodeId === shareLinkPopup.id ? 'Đã copy mã' : 'Copy mã'}</span>
+                </button>
+              </div>
+            </div>
+
+            {shareLinkPopup.convertedFromDev && (
+              <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800 leading-relaxed space-y-1">
+                <p className="font-bold">Lưu ý để tài khoản Gmail khác mở được link:</p>
+                <p>
+                  Link đã tự động chuyển từ link riêng tư (<span className="font-mono">ais-dev</span>) sang link chia sẻ công khai (<span className="font-mono">ais-pre</span>) để tránh lỗi 404. Chủ ứng dụng cần bật <strong>Share</strong> (chia sẻ công khai) hoặc <strong>Publish</strong> trên AI Studio.
+                </p>
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <button
+                type="button"
+                onClick={() => setShowCustomDomainInput(prev => !prev)}
+                className="text-[11px] font-bold text-indigo-600 hover:underline cursor-pointer"
+              >
+                {showCustomDomainInput ? 'Ẩn cài đặt tên miền riêng' : 'Đã Publish lên tên miền riêng? Bấm để đổi link gốc'}
+              </button>
+
+              {showCustomDomainInput && (
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="text"
+                    placeholder="https://ten-mien-cua-ban.run.app"
+                    value={customShareBaseUrl}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setCustomShareBaseUrl(val);
+                      try {
+                        localStorage.setItem('customShareBaseUrl', val);
+                      } catch {}
+                      const { url, convertedFromDev } = buildPublicShareUrl(shareLinkPopup.id, val, shareLinkPopup.paramType || 'exam');
+                      setShareLinkPopup(prev => prev ? { ...prev, url, convertedFromDev } : null);
+                    }}
+                    className="flex-1 text-xs bg-white border border-indigo-200 rounded-lg px-2.5 py-1.5 text-stone-700 outline-none focus:border-indigo-500"
+                  />
+                  {customShareBaseUrl && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomShareBaseUrl('');
+                        try {
+                          localStorage.removeItem('customShareBaseUrl');
+                        } catch {}
+                        const { url, convertedFromDev } = buildPublicShareUrl(shareLinkPopup.id, '', shareLinkPopup.paramType || 'exam');
+                        setShareLinkPopup(prev => prev ? { ...prev, url, convertedFromDev } : null);
+                      }}
+                      className="text-[11px] font-bold text-stone-500 hover:text-rose-600 px-2 py-1 cursor-pointer"
+                    >
+                      Mặc định
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <p className="text-[11px] text-stone-500 leading-relaxed">
+              Gửi đường link hoặc mã đề cho học sinh. Học sinh đăng nhập bằng tài khoản được cấp để làm bài và tự động lưu vào tiến độ học tập.
+            </p>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Assigned Success Modal with Unified Copyable Share Link */}
+      <AnimatePresence>
+        {assignedSuccessModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4"
+          >
+            <motion.div
+              initial={{ scale: 0.92, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.92, y: 20 }}
+              className="bg-white w-full max-w-xl max-h-[90vh] rounded-[32px] shadow-2xl overflow-hidden flex flex-col border border-stone-100"
+            >
+              <div className="p-6 sm:p-7 bg-gradient-to-r from-emerald-600 via-teal-600 to-indigo-600 text-white flex items-start justify-between gap-4">
+                <div className="flex items-start gap-3.5 min-w-0">
+                  <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center shrink-0">
+                    <CheckCircle2 className="w-7 h-7" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-bold uppercase tracking-widest text-emerald-100">Giao đề thi thành công!</p>
+                    <h3 className="text-lg sm:text-xl font-extrabold leading-snug mt-0.5 line-clamp-2">{assignedSuccessModal.title}</h3>
+                    <p className="text-xs text-emerald-100 font-semibold mt-1">
+                      {assignedSuccessModal.subject} • {assignedSuccessModal.questionCount} câu hỏi • Đã giao cho {assignedSuccessModal.classNames.length} lớp
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAssignedSuccessModal(null)}
+                  className="p-2 hover:bg-white/15 rounded-xl transition-all cursor-pointer shrink-0"
+                  title="Đóng"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="p-6 sm:p-7 overflow-y-auto space-y-5 flex-1">
+                {/* Assigned Classes Badges */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-bold text-stone-500 flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5 text-emerald-600" />
+                    Đã giao cho lớp:
+                  </span>
+                  {assignedSuccessModal.classNames.map((clsName, idx) => (
+                    <span
+                      key={`${clsName}_${idx}`}
+                      className="px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-extrabold"
+                    >
+                      {clsName}
+                    </span>
+                  ))}
+                </div>
+
+                {/* Unified Share Link Box (identical to the link outside next to each exam title) */}
+                <div className="p-4 bg-indigo-50/70 border border-indigo-200 rounded-2xl space-y-3">
+                  <p className="text-xs font-extrabold text-indigo-800 uppercase tracking-wider flex items-center gap-1.5">
+                    <Link2 className="w-4 h-4 text-indigo-600" />
+                    <span>Link đề thi gửi học sinh:</span>
+                  </p>
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={assignedSuccessModal.shareUrl}
+                      onFocus={(e) => e.target.select()}
+                      className="flex-1 text-xs font-mono bg-white border border-indigo-200 rounded-xl px-3 py-2.5 text-stone-700 outline-none focus:border-indigo-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleCopyModalLink('main_link', assignedSuccessModal.shareUrl, 'link đề thi')}
+                      className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0 cursor-pointer transition-all shadow-sm ${
+                        copiedModalKey === 'main_link'
+                          ? 'bg-emerald-600 text-white'
+                          : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                      }`}
+                    >
+                      {copiedModalKey === 'main_link' ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                      <span>{copiedModalKey === 'main_link' ? 'Đã sao chép' : 'Sao chép link'}</span>
+                    </button>
+                  </div>
+
+                  {/* Exam Code Row */}
+                  <div className="flex items-center justify-between gap-2 px-3 py-2 bg-white border border-indigo-100 rounded-xl">
+                    <div className="text-[11px] text-stone-600 truncate">
+                      <span className="font-bold text-stone-500">Mã đề thi: </span>
+                      <span className="font-mono font-bold text-indigo-700 select-all">{assignedSuccessModal.shareId}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyModalLink('main_code', assignedSuccessModal.shareId, 'mã đề thi')}
+                      className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 shrink-0 cursor-pointer"
+                    >
+                      {copiedModalKey === 'main_code' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                      <span>{copiedModalKey === 'main_code' ? 'Đã copy mã' : 'Copy mã'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {assignedSuccessModal.convertedFromDev && (
+                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-800 leading-relaxed">
+                    <strong>Lưu ý:</strong> Đường link đã tự động dùng địa chỉ công khai (<span className="font-mono">ais-pre</span>) để học sinh mở bằng tài khoản Gmail khác không bị lỗi 404.
+                  </div>
+                )}
+
+                <div className="space-y-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowCustomDomainInput(prev => !prev)}
+                    className="text-[11px] font-bold text-indigo-600 hover:underline cursor-pointer"
+                  >
+                    {showCustomDomainInput ? 'Ẩn cài đặt tên miền riêng' : 'Đã Publish lên tên miền riêng? Bấm để đổi link gốc'}
+                  </button>
+
+                  {showCustomDomainInput && (
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        placeholder="https://ten-mien-cua-ban.run.app"
+                        value={customShareBaseUrl}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setCustomShareBaseUrl(val);
+                          try {
+                            localStorage.setItem('customShareBaseUrl', val);
+                          } catch {}
+                          const { url, convertedFromDev } = buildPublicShareUrl(assignedSuccessModal.shareId, val, 'exam');
+                          setAssignedSuccessModal(prev => prev ? { ...prev, shareUrl: url, convertedFromDev } : null);
+                        }}
+                        className="flex-1 text-xs bg-white border border-indigo-200 rounded-lg px-2.5 py-1.5 text-stone-700 outline-none focus:border-indigo-500"
+                      />
+                      {customShareBaseUrl && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCustomShareBaseUrl('');
+                            try {
+                              localStorage.removeItem('customShareBaseUrl');
+                            } catch {}
+                            const { url, convertedFromDev } = buildPublicShareUrl(assignedSuccessModal.shareId, '', 'exam');
+                            setAssignedSuccessModal(prev => prev ? { ...prev, shareUrl: url, convertedFromDev } : null);
+                          }}
+                          className="text-[11px] font-bold text-stone-500 hover:text-rose-600 px-2 py-1 cursor-pointer"
+                        >
+                          Mặc định
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <p className="text-xs text-stone-500 leading-relaxed">
+                  Gửi đường link hoặc mã đề trên cho học sinh (Zalo, nhóm lớp...). Học sinh đăng nhập bằng tài khoản được cấp để làm bài; kết quả sẽ tự động lưu vào <strong>Tiến độ học tập</strong> của học sinh và <strong>Kết quả học tập</strong> của lớp.
+                </p>
+              </div>
+
+              <div className="p-5 bg-stone-50 border-t border-stone-100 flex flex-wrap items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setAssignedSuccessModal(null)}
+                  className="px-5 py-2.5 bg-white hover:bg-stone-100 text-stone-700 font-bold text-xs rounded-xl border border-stone-200 transition-all cursor-pointer"
+                >
+                  Đóng
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAssignedSuccessModal(null);
+                    setActiveTab('CLASSES');
+                  }}
+                  className="px-6 py-2.5 bg-stone-900 hover:bg-stone-800 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-2"
+                >
+                  <span>Xem bài đã giao trong Lớp học</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

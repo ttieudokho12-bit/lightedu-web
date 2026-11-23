@@ -43,6 +43,8 @@ interface QuizProps {
   loading?: boolean;
   onHome?: () => void;
   subject?: string;
+  title?: string;
+  isDirectSharedExam?: boolean;
 }
 
 const playCorrectSound = () => {
@@ -121,7 +123,7 @@ const playIncorrectSound = () => {
   }
 };
 
-export default function Quiz({ questions, onComplete, loading, onHome, subject }: QuizProps) {
+export default function Quiz({ questions, onComplete, loading, onHome, subject, title, isDirectSharedExam }: QuizProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<'A' | 'B' | 'C' | 'D' | null>(null);
   const [showExplanation, setShowExplanation] = useState(false);
@@ -197,6 +199,12 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject }
   );
 
   useEffect(() => {
+    // In direct shared exam link mode, go straight to Question 1 of the exact exercise
+    if (isDirectSharedExam) {
+      setShowVocabScreen(false);
+      return;
+    }
+
     if (isEnglishQuiz && questions && questions.length > 0) {
       // 1. Gather vocabulary from the first question's vocabularyList
       let list = questions[0].vocabularyList || [];
@@ -252,7 +260,7 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject }
         setShowVocabScreen(true);
       }
     }
-  }, [questions, isEnglishQuiz]);
+  }, [questions, isEnglishQuiz, isDirectSharedExam]);
 
   const currentQuestion = quizQuestions ? quizQuestions[currentIndex] : null;
 
@@ -931,6 +939,31 @@ export default function Quiz({ questions, onComplete, loading, onHome, subject }
       </div>
 
       <div className="max-w-3xl mx-auto px-4 pt-8 pb-16 relative z-10">
+        {title && (
+          <div className="mb-5 bg-white/95 backdrop-blur-sm border-2 border-indigo-100 rounded-2xl px-5 py-3.5 shadow-sm flex flex-wrap items-center justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2 mb-1">
+                {isDirectSharedExam && (
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-indigo-100 text-indigo-700">
+                    Bài tập theo link chia sẻ
+                  </span>
+                )}
+                {subject && (
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">
+                    {subject}
+                  </span>
+                )}
+              </div>
+              <h2 className="text-base sm:text-lg font-extrabold text-stone-900 leading-snug break-words">
+                {title}
+              </h2>
+            </div>
+            <div className="text-xs font-bold text-stone-500 shrink-0 bg-stone-50 px-3 py-1.5 rounded-xl border border-stone-100">
+              {quizQuestions.length} câu hỏi
+            </div>
+          </div>
+        )}
+
         {/* Quiz Navigation and Status */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 z-10 relative">
           <div className="flex items-center gap-3">

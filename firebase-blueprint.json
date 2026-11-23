@@ -9,6 +9,7 @@
         "email": { "type": "string", "format": "email", "description": "User email" },
         "displayName": { "type": "string", "description": "User display name" },
         "role": { "type": "string", "enum": ["student", "teacher", "admin"], "description": "User role" },
+        "schoolYear": { "type": "string", "description": "Academic school year (e.g. 2025-2026)" },
         "classId": { "type": "string", "description": "ID of the class the student belongs to" }
       },
       "required": ["uid", "email", "role"]
@@ -20,7 +21,8 @@
       "properties": {
         "id": { "type": "string" },
         "name": { "type": "string" },
-        "teacherId": { "type": "string" }
+        "teacherId": { "type": "string" },
+        "schoolYear": { "type": "string", "description": "Academic school year (e.g. 2025-2026)" }
       },
       "required": ["name", "teacherId"]
     },
@@ -32,6 +34,8 @@
         "id": { "type": "string" },
         "classId": { "type": "string" },
         "teacherId": { "type": "string" },
+        "templateId": { "type": "string" },
+        "schoolYear": { "type": "string", "description": "Academic school year (e.g. 2026-2027)" },
         "title": { "type": "string" },
         "subject": { "type": "string" },
         "questions": { "type": "array" },
@@ -45,9 +49,14 @@
       "type": "object",
       "properties": {
         "uid": { "type": "string", "description": "UID of the student" },
+        "assignmentId": { "type": "string", "description": "Optional assignment or template reference ID" },
+        "sharedTemplateId": { "type": "string", "description": "Optional quiz template ID when taken via share link" },
+        "classId": { "type": "string", "description": "Optional class ID of the student" },
+        "schoolYear": { "type": "string", "description": "Academic school year (e.g. 2026-2027)" },
         "subject": { "type": "string", "description": "Subject (Toán, Ngữ Văn, Tiếng Anh)" },
         "topic": { "type": "string", "description": "Topic of the quiz" },
         "score": { "type": "number", "description": "Number of correct answers" },
+        "points": { "type": "number", "description": "Calculated learning points" },
         "totalQuestions": { "type": "number", "description": "Total number of questions" },
         "timestamp": { "type": "string", "format": "date-time", "description": "When the quiz was completed" }
       },
@@ -60,6 +69,7 @@
       "properties": {
         "id": { "type": "string" },
         "teacherId": { "type": "string" },
+        "schoolYear": { "type": "string", "description": "Academic school year (e.g. 2026-2027)" },
         "title": { "type": "string" },
         "subject": { "type": "string" },
         "questions": { "type": "array" },

@@ -1,8 +1,45 @@
+export const DEFAULT_SCHOOL_YEAR = '2025-2026';
+export const DEFAULT_USER_SCHOOL_YEAR = '2026-2027';
+
+export const PRESET_SCHOOL_YEARS: string[] = [
+  '2024-2025',
+  '2025-2026',
+  '2026-2027',
+  '2027-2028',
+  '2028-2029',
+  '2029-2030'
+];
+
+export const getStoredCustomSchoolYears = (): string[] => {
+  try {
+    const saved = localStorage.getItem('adminCustomSchoolYears');
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) {
+        return parsed.filter((y): y is string => typeof y === 'string' && y.trim().length > 0);
+      }
+    }
+  } catch {}
+  return [];
+};
+
+export const buildAvailableSchoolYears = (extraYears: (string | undefined | null)[] = []): string[] => {
+  const yearSet = new Set<string>([
+    ...PRESET_SCHOOL_YEARS,
+    ...getStoredCustomSchoolYears()
+  ]);
+  extraYears.forEach((y) => {
+    if (y && y.trim()) yearSet.add(y.trim());
+  });
+  return Array.from(yearSet).sort();
+};
+
 export interface UserProfile {
   uid: string;
   email: string;
   displayName: string | null;
   role: 'student' | 'teacher' | 'admin';
+  schoolYear?: string;
   classId?: string;
   grade?: string; // e.g., 'Lớp 1', 'Lớp 2', 'Lớp 3', 'Lớp 4', 'Lớp 5'
   schoolName?: string;
@@ -17,6 +54,7 @@ export interface ClassRoom {
   id: string;
   name: string;
   teacherId: string;
+  schoolYear?: string;
   customTopics?: Record<string, string[]>;
 }
 
@@ -24,6 +62,8 @@ export interface Assignment {
   id: string;
   classId: string;
   teacherId: string;
+  templateId?: string | null;
+  schoolYear?: string;
   title: string;
   subject: Subject;
   questions: Question[];
@@ -52,8 +92,10 @@ export interface Question {
 export interface QuizResult {
   id?: string;
   uid: string;
-  assignmentId: string;
-  classId: string;
+  assignmentId?: string | null;
+  sharedTemplateId?: string | null;
+  classId?: string | null;
+  schoolYear?: string;
   subject: string;
   topic: string;
   score: number;
@@ -69,6 +111,7 @@ export interface PronunciationResult {
   className?: string;
   schoolName?: string;
   grade?: string;
+  schoolYear?: string;
   subject: string;
   word: string;
   meaning?: string;
@@ -84,6 +127,7 @@ export interface PronunciationResult {
 export interface QuizTemplate {
   id?: string;
   teacherId: string;
+  schoolYear?: string;
   title: string;
   subject: Subject;
   questions: Question[];

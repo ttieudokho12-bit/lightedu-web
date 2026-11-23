@@ -1,16 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { LogOut, Lightbulb, User as UserIcon, ShieldCheck, GraduationCap as StudentIcon, Settings, Home } from 'lucide-react';
+import { LogOut, Lightbulb, User as UserIcon, ShieldCheck, GraduationCap as StudentIcon, Settings, Home, Calendar } from 'lucide-react';
 import { auth, db } from '../firebase';
 import { signOut, User } from 'firebase/auth';
 import { doc, getDoc } from 'firebase/firestore';
-import { UserProfile } from '../types';
+import { UserProfile, buildAvailableSchoolYears } from '../types';
 
 interface NavbarProps {
   user: User;
   onHome?: () => void;
+  selectedSchoolYear?: string;
+  onChangeSchoolYear?: (year: string) => void;
 }
 
-export default function Navbar({ user, onHome }: NavbarProps) {
+export default function Navbar({ user, onHome, selectedSchoolYear, onChangeSchoolYear }: NavbarProps) {
   const [profile, setProfile] = useState<UserProfile | null>(null);
 
   useEffect(() => {
@@ -21,44 +23,69 @@ export default function Navbar({ user, onHome }: NavbarProps) {
     fetchProfile();
   }, [user]);
 
+  const availableYears = buildAvailableSchoolYears([selectedSchoolYear, profile?.schoolYear]);
+
   const handleLogout = () => {
     localStorage.removeItem('localUserSession');
+    if (user?.uid) {
+      sessionStorage.removeItem(`selectedSchoolYear_${user.uid}`);
+    }
+    sessionStorage.removeItem('activeSchoolYear');
     signOut(auth).then(() => {
       window.location.reload();
     });
   };
 
   return (
-    <nav className="bg-white border-b border-stone-100 px-6 py-4 flex items-center justify-between sticky top-0 z-50 shadow-sm">
-      <div className="flex items-center gap-3">
+    <nav className="bg-white border-b border-stone-100 px-4 sm:px-6 py-3.5 flex items-center justify-between gap-3 sticky top-0 z-50 shadow-sm">
+      <div className="flex items-center gap-3 min-w-0">
         {onHome ? (
           <button 
             onClick={onHome} 
-            className="flex items-center gap-3 hover:opacity-80 transition-all text-left group"
+            className="flex items-center gap-3 hover:opacity-80 transition-all text-left group min-w-0"
             title="Về Trang chủ"
           >
-            <div className="p-2 bg-emerald-600 rounded-lg group-hover:scale-105 transition-transform">
+            <div className="p-2 bg-emerald-600 rounded-lg group-hover:scale-105 transition-transform shrink-0">
               <Lightbulb className="w-6 h-6 text-white" />
             </div>
-            <div>
-              <h1 className="text-lg font-bold text-stone-900 leading-tight">Lightedu - Nơi tri thức tỏa sáng</h1>
+            <div className="min-w-0">
+              <h1 className="text-base sm:text-lg font-bold text-stone-900 leading-tight truncate">Lightedu - Nơi tri thức tỏa sáng</h1>
               <p className="text-[10px] text-stone-500 font-bold">Zalo: 0359888795</p>
             </div>
           </button>
         ) : (
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-emerald-600 rounded-lg">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="p-2 bg-emerald-600 rounded-lg shrink-0">
               <Lightbulb className="w-6 h-6 text-white" />
             </div>
-            <div>
-              <h1 className="text-lg font-bold text-stone-900 leading-tight">Lightedu - Nơi tri thức tỏa sáng</h1>
+            <div className="min-w-0">
+              <h1 className="text-base sm:text-lg font-bold text-stone-900 leading-tight truncate">Lightedu - Nơi tri thức tỏa sáng</h1>
               <p className="text-[10px] text-stone-500 font-bold">Zalo: 0359888795</p>
             </div>
           </div>
         )}
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2.5 sm:gap-4 shrink-0">
+        {selectedSchoolYear && onChangeSchoolYear && (
+          <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200/90 px-2.5 py-1.5 rounded-xl shadow-xs">
+            <Calendar className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+            <select
+              value={selectedSchoolYear}
+              onChange={(e) => onChangeSchoolYear(e.target.value)}
+              className="bg-transparent text-xs font-extrabold text-amber-900 outline-none cursor-pointer pr-1"
+              aria-label="Chọn năm học"
+              title="Chọn năm học hiển thị dữ liệu"
+            >
+              {availableYears.map((year) => (
+                <option key={year} value={year} className="text-stone-900 bg-white">
+                  NH {year}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
         {onHome && (
           <button
             onClick={onHome}
@@ -66,7 +93,7 @@ export default function Navbar({ user, onHome }: NavbarProps) {
             title="Quay lại Trang chủ"
           >
             <Home className="w-4 h-4" />
-            <span className="hidden sm:inline">Quay lại Trang chủ</span>
+            <span className="hidden md:inline">Quay lại Trang chủ</span>
           </button>
         )}
 

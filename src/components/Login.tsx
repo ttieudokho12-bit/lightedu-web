@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Mail, Lock, Eye, EyeOff } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, BookOpen, Link2, AlertCircle } from 'lucide-react';
 import { auth, db, signInWithEmailAndPassword, googleProvider } from '../firebase';
-import { doc, getDoc, getDocs, collection, query, where } from 'firebase/firestore';
+import { doc, getDoc, getDocs, updateDoc, collection, query, where } from 'firebase/firestore';
 import { signInWithPopup, signOut } from 'firebase/auth';
 import { UserProfile } from '../types';
 // @ts-ignore
@@ -523,7 +523,20 @@ const PencilHolder = () => (
   </svg>
 );
 
-export default function Login() {
+export interface SharedExamPreview {
+  id: string;
+  title: string;
+  subject: string;
+  questionCount: number;
+}
+
+interface LoginProps {
+  sharedExamInfo?: SharedExamPreview | null;
+  sharedExamLoading?: boolean;
+  sharedExamError?: string | null;
+}
+
+export default function Login({ sharedExamInfo, sharedExamLoading, sharedExamError }: LoginProps = {}) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -537,7 +550,9 @@ export default function Login() {
 
     let finalEmail = email.trim();
     if (!finalEmail.includes('@')) {
-      finalEmail = `${finalEmail.toLowerCase()}@tuanlo.vn`;
+      finalEmail = `${finalEmail.toLowerCase()}@lightedu.vn`;
+    } else {
+      finalEmail = finalEmail.toLowerCase();
     }
 
     try {
@@ -546,25 +561,44 @@ export default function Login() {
     } catch (err: any) {
       console.warn('Firebase Auth failed, trying local fallback:', err);
       try {
-        // Fallback for operation-not-allowed, user-not-found, or other credentials issues
+        // Fallback for operation-not-allowed, user-not-found, or legacy @tuanlo.vn domain accounts
         const usersRef = collection(db, 'users');
-        const q = query(usersRef, where('email', '==', finalEmail));
-        const snap = await getDocs(q);
-        
+        let snap = await getDocs(query(usersRef, where('email', '==', finalEmail)));
+
+        // Also check alternate domain so previously created @tuanlo.vn accounts continue to work seamlessly
+        if (snap.empty && /@lightedu\.vn$/i.test(finalEmail)) {
+          const legacyEmail = finalEmail.replace(/@lightedu\.vn$/i, '@tuanlo.vn');
+          snap = await getDocs(query(usersRef, where('email', '==', legacyEmail)));
+        } else if (snap.empty && /@tuanlo\.vn$/i.test(finalEmail)) {
+          const migratedEmail = finalEmail.replace(/@tuanlo\.vn$/i, '@lightedu.vn');
+          snap = await getDocs(query(usersRef, where('email', '==', migratedEmail)));
+        }
+
         if (!snap.empty) {
           const userDoc = snap.docs[0];
           const profile = userDoc.data() as UserProfile & { password?: string };
-          
+
           // Check stored password (default is '123456', or 'Sangle87@' for admin)
           const isAdmin = finalEmail === 'ttieudokho12@gmail.com';
           const defaultPassword = isAdmin ? 'Sangle87@' : '123456';
           const storedPassword = profile.password || defaultPassword;
           if (password === storedPassword) {
+            // Seamlessly migrate legacy @tuanlo.vn email to @lightedu.vn in Firestore
+            let resolvedEmail = profile.email;
+            if (/@tuanlo\.vn$/i.test(resolvedEmail)) {
+              resolvedEmail = resolvedEmail.replace(/@tuanlo\.vn$/i, '@lightedu.vn');
+              try {
+                await updateDoc(userDoc.ref, { email: resolvedEmail });
+              } catch (migrateErr) {
+                console.warn('Could not migrate legacy email in Firestore:', migrateErr);
+              }
+            }
+
             // Sign in locally! Save to localStorage
             const localSession = {
               uid: profile.uid,
-              email: profile.email,
-              displayName: profile.displayName || profile.email.split('@')[0],
+              email: resolvedEmail,
+              displayName: profile.displayName || resolvedEmail.split('@')[0],
               role: profile.role,
               classId: profile.classId,
               grade: profile.grade
@@ -776,6 +810,49 @@ export default function Login() {
               Hệ thống học tập thông minh
             </span>
           </div>
+
+          {/* Shared Exam Notice Banner */}
+          {sharedExamLoading && (
+            <div className="mt-4 p-3.5 bg-indigo-50 border border-indigo-200 rounded-2xl text-xs text-indigo-700 font-semibold flex items-center justify-center gap-2">
+              <div className="w-4 h-4 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+              <span>Đang tải thông tin đề thi được chia sẻ...</span>
+            </div>
+          )}
+
+          {!sharedExamLoading && sharedExamInfo && (
+            <motion.div
+              initial={{ opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-4 p-4 bg-gradient-to-br from-indigo-50 via-blue-50 to-emerald-50 border-2 border-indigo-200 rounded-2xl text-left shadow-sm space-y-1.5"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="inline-flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wider text-indigo-700 bg-white/90 px-2.5 py-0.5 rounded-full border border-indigo-100">
+                  <Link2 className="w-3 h-3" />
+                  Đề thi được giáo viên chia sẻ
+                </span>
+                <span className="text-[10px] font-bold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-full">
+                  {sharedExamInfo.questionCount} câu hỏi
+                </span>
+              </div>
+              <p className="text-sm font-extrabold text-stone-900 leading-snug line-clamp-2 flex items-start gap-1.5">
+                <BookOpen className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                <span>{sharedExamInfo.title}</span>
+              </p>
+              <p className="text-[11px] font-semibold text-indigo-700">
+                Môn: {sharedExamInfo.subject}
+              </p>
+              <p className="text-[11px] text-stone-600 leading-relaxed pt-1 border-t border-indigo-100/80">
+                Đăng nhập bằng tài khoản học sinh được cấp để bắt đầu làm bài ngay. Kết quả sẽ tự động lưu vào tiến độ học tập của em!
+              </p>
+            </motion.div>
+          )}
+
+          {!sharedExamLoading && sharedExamError && (
+            <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-2xl text-left flex items-start gap-2 text-xs text-amber-800">
+              <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+              <span className="font-semibold leading-relaxed">{sharedExamError}</span>
+            </div>
+          )}
 
           {/* Login Form */}
           <form onSubmit={handleSubmit} className="space-y-4 mt-6">

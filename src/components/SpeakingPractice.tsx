@@ -444,9 +444,11 @@ export const SpeakingPractice: React.FC<SpeakingPracticeProps> = ({
       const isCorrect = score >= 80;
       const isConfident = score >= 70;
       
+      const activeSchoolYear = sessionStorage.getItem('activeSchoolYear') || '2026-2027';
       const pResult = {
         uid: auth.currentUser.uid,
         studentName: auth.currentUser.displayName || 'Học sinh',
+        schoolYear: activeSchoolYear,
         subject: subject || 'Tiếng Anh',
         word: currentItem.word,
         meaning: currentItem.meaning,

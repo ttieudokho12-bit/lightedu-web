@@ -1105,7 +1105,8 @@ async function startServer() {
 
   // API Route to bulk create users
   app.post('/api/admin/bulk-create-users', async (req, res) => {
-    const { names, role } = req.body;
+    const { names, role, schoolYear } = req.body;
+    const resolvedSchoolYear = typeof schoolYear === 'string' && schoolYear.trim() ? schoolYear.trim() : '2025-2026';
     const results = [];
 
     if (!names || !Array.isArray(names)) {
@@ -1126,7 +1127,7 @@ async function startServer() {
         // Add a small random suffix to ensure uniqueness
         const randomSuffix = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
         const username = `${baseUsername}.${randomSuffix}`;
-        const email = `${username}@tuanlo.vn`;
+        const email = `${username}@lightedu.vn`;
         const password = '123456';
 
         // Create Auth User
@@ -1144,6 +1145,7 @@ async function startServer() {
           email,
           displayName: name,
           role: role || 'student',
+          schoolYear: resolvedSchoolYear,
           username: username,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
         });
@@ -1181,6 +1183,28 @@ async function startServer() {
       console.error(`Error deleting user document ${uid}:`, error?.message || error);
       res.status(500).json({ error: error.message || 'Lỗi khi xóa người dùng' });
     }
+  });
+
+  // API Route to sync migrated @lightedu.vn emails in Firebase Auth
+  app.post('/api/admin/migrate-email-domain', async (req, res) => {
+    const { users } = req.body;
+    if (!Array.isArray(users)) {
+      return res.status(400).json({ error: 'Danh sách người dùng không hợp lệ' });
+    }
+
+    let updatedAuthCount = 0;
+    for (const item of users) {
+      if (!item?.uid || !item?.email || !/@lightedu\.vn$/i.test(item.email)) continue;
+      try {
+        await admin.auth().updateUser(item.uid, { email: item.email });
+        updatedAuthCount++;
+      } catch (authErr: any) {
+        // Local-only Firestore users or already-migrated users are safely skipped
+        console.log(`Auth email sync skipped for ${item.uid}: ${authErr?.code || authErr?.message}`);
+      }
+    }
+
+    res.json({ success: true, updatedAuthCount });
   });
 
   // API Route to bulk delete users
